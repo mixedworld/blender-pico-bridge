@@ -27,4 +27,16 @@ class StableTouchCaptureUseCaseTest {
         assertNull(capture.update(point,.9f,true,800).point)
         assertEquals(ContactReadiness.RELEASE_PINCH,capture.update(point,.9f,true,820).readiness)
     }
+    @Test fun callbacksSharingOneMillisecondDoNotResetTheStabilityWindow() {
+        val capture=StableTouchCaptureUseCase()
+        repeat(14) { i ->
+            capture.update(point,.1f,true,i*20L)
+            capture.update(point,.1f,true,i*20L)
+        }
+        val result=capture.update(point,.9f,true,280)
+        assertEquals(ContactReadiness.CAPTURED,result.readiness)
+        assertTrue(result.spanMillis >= 200)
+        assertNull(capture.update(point,.9f,true,280).point)
+    }
+
 }
