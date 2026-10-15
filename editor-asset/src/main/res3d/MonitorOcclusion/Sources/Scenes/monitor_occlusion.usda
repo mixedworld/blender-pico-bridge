@@ -1,0 +1,55 @@
+#usda 1.0
+(
+    customLayerData = {
+        string Copyright = "Copyright 2022 - 2024 PICO. All rights reserved."
+        string RuntimeVersion = "Runtime V6.1.0.0.rls.25"
+        string Version = "Spatial Editor V6.1.7"
+    }
+    defaultPrim = "Root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Cube "MonitorMask" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        float3[] extent = [(-0.1, -0.1, -0.1), (0.1, 0.1, 0.1)]
+        rel material:binding = </Root/MonitorMask/DefaultMaterial> (
+            bindMaterialAs = "weakerThanDescendants"
+        )
+        double size = 0.20000000298023224
+        quatf xformOp:orient = (1, 0, 0, 0)
+        float3 xformOp:scale = (5, 5, 0.005)
+        float3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+        def Material "DefaultMaterial" (
+            customData = {
+                bool applyToneMapping = 0
+                string blendingMode = "OPAQUE"
+                string cullingMode = "NONE"
+                bool depthTest = 1
+                bool depthWrite = 1
+                string materialType = "SHADER_GRAPH"
+                float opacityThreshold = 0
+                string shaderGraphGuid = "29d6fe5b-37bd-46ab-aad6-9b960e135a67"
+            }
+        )
+        {
+            token outputs:mtlx:surface.connect = </Root/MonitorMask/DefaultMaterial/OcclusionSurface.outputs:out>
+            token outputs:spatial:vertex
+            float2 ui:nodegraph:subgraphOutputs:pos = (377.25, 102.75)
+
+            def Shader "OcclusionSurface"
+            {
+                uniform token info:id = "ND__occlusion_surfaceshader"
+                token outputs:out
+                float2 ui:nodegraph:node:pos = (93.5, 102.75)
+                int ui:nodegraph:node:stackingOrder = 15
+            }
+        }
+    }
+}

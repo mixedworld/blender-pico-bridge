@@ -1,0 +1,52 @@
+# Pairing credentials and local configuration
+.pairing*.json
+.env
+.env.*
+!.env.example
+**/local.properties
+**/.pico*
+**/.scratch/
+**/PICO-*-AGENTIC-TOOLS.AGENTS.md
+
+# Local tools, IDEs and caches
+.tools/
+.venv/
+**/__pycache__/
+*.py[cod]
+.DS_Store
+**/.DS_Store
+**/.gradle/
+**/build/
+**/Build/
+**/.idea/
+*.iml
+**/.cxx/
+**/.externalNativeBuild/
+**/.CacheData/
+**/UserSettings/
+**/ModelView
+
+# Private test evidence, captured rooms and third-party/demo assets
+/evidence/
+/recordings/
+/research/
+/demo/
+/assets/
+# Historical scripts depend on unpublished third-party or local scenes.
+/tools/setup_demo.py
+/tools/prepare_bmw.py
+/tools/render_bmw.py
+/tools/verify_explosion_blender.py
+# Unused original scaffold model; runtime loads the live bridge model.
+/native-app/app/src/main/assets/box.usdz
+
+# Generated release artifacts and private signing material
+/dist/
+*.apk
+*.aab
+*.blend1
+*.jks
+*.keystore
+key.properties
+*.hprof
+*.log
