@@ -1,0 +1,150 @@
+{
+  "activeScenePath": "Sources/Scenes/monitor_occlusion.usda",
+  "scenes": [
+    {
+      "bundlePath": "Sources/Scenes/monitor_occlusion.usda",
+      "container": {
+        "appContainer": "Stage",
+        "bounded": false,
+        "contentHost": null,
+        "coordinateSystem": "right-handed, meters",
+        "editorType": "Stage",
+        "isDefault": false,
+        "showUISample": false,
+        "sizeDp": null,
+        "sizeMeters": null,
+        "source": "editor-viewport-container-settings",
+        "spaceRequirement": "FullSpace",
+        "unit": "DevicePoint",
+        "usageHint": "Use Stage for immersive unbounded 3D content."
+      },
+      "entities": [
+        {
+          "active": true,
+          "bounds": null,
+          "components": [],
+          "entityId": "scene:monitor-occlusion:Root/MonitorMask",
+          "name": "MonitorMask",
+          "parentPath": "Root",
+          "path": "Root/MonitorMask",
+          "resources": {},
+          "transform": {
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              5,
+              5,
+              0.004999999888241291
+            ]
+          },
+          "type": "Entity"
+        },
+        {
+          "active": true,
+          "bounds": null,
+          "components": [],
+          "entityId": "scene:monitor-occlusion:Root/MonitorMask/DefaultMaterial",
+          "name": "DefaultMaterial",
+          "parentPath": "Root/MonitorMask",
+          "path": "Root/MonitorMask/DefaultMaterial",
+          "resources": {},
+          "transform": {
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          },
+          "type": "Entity"
+        }
+      ],
+      "entityCount": 2,
+      "guid": "e361361a-7484-407f-93a7-db3445a56b89",
+      "hierarchy": [
+        {
+          "active": true,
+          "children": [
+            {
+              "active": true,
+              "children": [],
+              "entityId": "scene:monitor-occlusion:Root/MonitorMask/DefaultMaterial",
+              "name": "DefaultMaterial",
+              "path": "Root/MonitorMask/DefaultMaterial",
+              "transform": {
+                "position": [
+                  0,
+                  0,
+                  0
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "type": "Entity"
+            }
+          ],
+          "entityId": "scene:monitor-occlusion:Root/MonitorMask",
+          "name": "MonitorMask",
+          "path": "Root/MonitorMask",
+          "transform": {
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              5,
+              5,
+              0.004999999888241291
+            ]
+          },
+          "type": "Entity"
+        }
+      ],
+      "id": "scene:monitor-occlusion",
+      "name": "monitor_occlusion",
+      "rootCount": 1,
+      "sourcePath": "Sources/Scenes/monitor_occlusion.usda",
+      "warnings": []
+    }
+  ],
+  "schemaVersion": "0.1",
+  "scope": "bundle_scenes",
+  "source": "pack_editor_bundle",
+  "sourceTool": "export_bundle_scene_manifest",
+  "warnings": []
+}

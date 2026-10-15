@@ -1,0 +1,38 @@
+#usda 1.0
+(
+    defaultPrim = "Root"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Root"
+{
+    def Xform "MonitorMask"
+    {
+        def Material "DefaultMaterial" (
+            customData = {
+                bool applyToneMapping = 0
+                string blendingMode = "OPAQUE"
+                string cullingMode = "NONE"
+                bool depthTest = 1
+                bool depthWrite = 1
+                string materialType = "SHADER_GRAPH"
+                float opacityThreshold = 0
+                string shaderGraphGuid = "29d6fe5b-37bd-46ab-aad6-9b960e135a67"
+            }
+        )
+        {
+            token outputs:mtlx:surface.connect = </Root/MonitorMask/DefaultMaterial/OcclusionSurface.outputs:out>
+            token outputs:spatial:vertex
+            float2 ui:nodegraph:subgraphOutputs:pos = (377.25, 102.75)
+
+            def Shader "OcclusionSurface"
+            {
+                uniform token info:id = "ND__occlusion_surfaceshader"
+                token outputs:out
+                float2 ui:nodegraph:node:pos = (93.5, 102.75)
+                int ui:nodegraph:node:stackingOrder = 15
+            }
+        }
+    }
+}

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "spatialcraft.editor-pack-provenance/v1",
+  "managed": false,
+  "generatedAt": "2026-10-14T16:26:21.502Z",
+  "bundle": {
+    "path": "monitor_occlusion.bundle",
+    "digest": {
+      "algorithm": "sha256",
+      "value": "2c453b36139546fad4b58a06b94b2a051ad0a7f40bfe0ab1dd4be8c4813087ae"
+    },
+    "scenesPath": "monitor_occlusion.scenes.json",
+    "scenesDigest": {
+      "algorithm": "sha256",
+      "value": "0f818ebcd8f81752c00a55f2bf8fe06c0c48d4ec11215e7281745eccb793ecf7"
+    },
+    "entryScene": "Sources/Scenes/monitor_occlusion.usda",
+    "sceneCount": 1
+  },
+  "packageGate": {
+    "status": "pass",
+    "sceneManifestWritten": true,
+    "acceptedSceneMatched": true
+  },
+  "warnings": [
+    {
+      "code": "UNMANAGED_EDITOR_PACKAGE",
+      "message": "This bundle was packaged outside a managed Spatial Editor Workflow Run and has no accepted revision or gate proof."
+    }
+  ],
+  "publicationNormalization": {
+    "kind": "authoring-path-redaction",
+    "scope": "AssetInfo.json source cache path prefixes only; equal byte lengths preserve protobuf encoding; shader, material, mesh and scene payloads unchanged",
+    "originalExportSha256": "9f9bd0573b18e80a62f16c03a08be888eed6a6060fecd9d0f670bf21272bfe6c",
+    "managed": false
+  }
+}
