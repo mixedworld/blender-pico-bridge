@@ -1,6 +1,6 @@
 # Publication checklist
 
-This repository is prepared locally. It has no implied GitHub remote or already-published release. The intended account is `mixedworld`; authenticate that account and confirm the final repository name and visibility before publishing.
+The public source repository is [mixedworld/blender-pico-bridge](https://github.com/mixedworld/blender-pico-bridge). Publication is manual: audit the intended source tree and release assets before pushing or publishing a new version.
 
 ## Review source
 

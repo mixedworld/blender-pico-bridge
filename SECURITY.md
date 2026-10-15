@@ -8,4 +8,4 @@ The Blender server listens on local interfaces while Start Bridge is active. Sto
 
 The experimental source-hide command only accepts one boolean and expires unless renewed. It is separate from the emulator-only getting-started workflow.
 
-Do not open a public issue containing a working token or private model. Stop the bridge, clear/replace its token and re-pair if a credential is exposed. Until a dedicated private reporting channel is configured, use GitHub’s private vulnerability reporting if enabled; otherwise contact the repository maintainer privately without posting the sensitive material.
+Do not open a public issue containing a working token or private model. Stop the bridge, clear/replace its token and re-pair if a credential is exposed. Private vulnerability reporting is enabled: [report a vulnerability privately to the maintainers](https://github.com/mixedworld/blender-pico-bridge/security/advisories/new).
