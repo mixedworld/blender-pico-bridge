@@ -61,4 +61,40 @@ class PairingAndDepthTest {
         val bounded = MergeViewportDeltaUseCase()(ViewportDelta(pan=listOf(.9f,0f,0f),zoom=3f),ViewportDelta(pan=listOf(.9f,0f,0f),zoom=3f))
         assertEquals(1f,bounded.pan[0],0f);assertEquals(4f,bounded.zoom,0f)
     }
+    @Test fun multiPointDepthRecoversMinorityCorrectClusterAndRejectsAmbiguity() {
+        val corners=points()
+        val mixed=corners.flatMapIndexed { i,p ->
+            if (i in listOf(0,3)) List(7) { p }+List(18) { p.map { v -> v*4 } }
+            else List(25) { p }
+        }
+        val size=MeasureScreenSamplesUseCase()(mixed,25,board)
+        assertNotNull(size); assertEquals(.6f,size!!.width,.00001f)
+        val ambiguous=corners.flatMap { p -> List(12) { p }+List(13) { p.map { it*2 } } }
+        assertNull(MeasureScreenSamplesUseCase()(ambiguous,25,board))
+        assertNull(MeasureScreenSamplesUseCase()(List(100) { listOf(0f,0f,0f) },25,board))
+    }
+    @Test fun kalmanRequiresConsensusBeforeReturningAndRejectsLargeInnovations() {
+        val filter=StabilizeScreenSizeUseCase()
+        repeat(5) { assertNull(filter.add(MeasuredScreen(.6f,.34f))) }
+        assertNull(filter.add(MeasuredScreen(1.5f,.8f)))
+        assertEquals(1,filter.rejectedSamples);assertEquals(5,filter.acceptedSamples)
+        var result: MeasuredScreen?=null
+        repeat(15) { i -> result=filter.add(MeasuredScreen(.6f+(i%3-1)*.003f,.34f+(i%3-1)*.002f)) }
+        assertNotNull(result);assertEquals(.6f,result!!.width,.003f);assertEquals(.34f,result!!.height,.002f)
+    }
+
+    @Test fun fingertipContactsRecoverMetricWorldPoseAndMarkerInsets() {
+        val angle=.3f;val c=kotlin.math.cos(angle);val sn=kotlin.math.sin(angle)
+        val contacts=board.markers.map { m ->
+            val x=((m.x+m.width*.5f)/board.width-.5f)*.6f
+            val y=(.5f-(m.y+m.height*.5f)/board.height)*.34f
+            listOf(2f+c*x,1.3f+y,-1f-sn*x)
+        }
+        val result=FitTouchedScreenUseCase()(contacts,board)
+        assertEquals(.6f,result.width,.00001f);assertEquals(.34f,result.height,.00001f)
+        assertEquals(2f,result.center[0],.00001f);assertEquals(1.3f,result.center[1],.00001f);assertEquals(-1f,result.center[2],.00001f)
+        assertEquals(kotlin.math.sin(angle/2),result.rotation[1],.00001f)
+        rejects { FitTouchedScreenUseCase()(contacts.toMutableList().apply { set(2,contacts[0]) },board) }
+    }
+
 }

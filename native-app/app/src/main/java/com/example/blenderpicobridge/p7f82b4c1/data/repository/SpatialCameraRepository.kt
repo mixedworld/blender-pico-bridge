@@ -58,8 +58,10 @@ class SpatialCameraRepository(private val context: Context) {
             val captureBindings = listOf(left,right,timestamp,intrinsics).associate { capture.newPlaceholderLike(it) to it }
             val captureRefs = captureBindings.keys.toList()
             capture.rectifiedVSTAccess(rightImageResult=captureRefs[1],leftImageResult=captureRefs[0],timestampResult=captureRefs[2],cameraMatrixResult=captureRefs[3])
-            val uv = if (purpose == ScanPurpose.DEPTH) tensor(Tensor.Point2ArrayInitInfo(Tensor.DataType.INT32,4)) else null
-            val xyz = if (purpose == ScanPurpose.DEPTH) tensor(Tensor.Point3ArrayInitInfo(Tensor.DataType.FLOAT32,4)) else null
+            val samplesPerMarker = 25
+            val pointCount = samplesPerMarker*4
+            val uv = if (purpose == ScanPurpose.DEPTH) tensor(Tensor.Point2ArrayInitInfo(Tensor.DataType.INT32,pointCount)) else null
+            val xyz = if (purpose == ScanPurpose.DEPTH) tensor(Tensor.Point3ArrayInitInfo(Tensor.DataType.FLOAT32,pointCount)) else null
             val projection = if (uv != null && xyz != null) session.newPipeline().also(pipelines::add) else null
             val depthBindings = if (projection != null) listOf(uv!!,timestamp,intrinsics,left,right,xyz!!).associate { projection.newPlaceholderLike(it) to it } else emptyMap()
             if (projection != null) {
@@ -68,7 +70,7 @@ class SpatialCameraRepository(private val context: Context) {
             }
             val reader = QRCodeReader()
             val detector = if (purpose == ScanPurpose.DEPTH) ArucoDetector(Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50)) else null
-            val measures = mutableListOf<MeasuredScreen>()
+            var stability = StabilizeScreenSizeUseCase()
             var lastMarkers: Set<Int>? = null
             var frames = 0
             var previousHash: Int? = null
@@ -120,7 +122,7 @@ class SpatialCameraRepository(private val context: Context) {
                             lastMarkers = found
                         }
                         if (centers != null) {
-                            SharedMemory.create("screen-marker-uv",32).use { memory ->
+                            SharedMemory.create("screen-marker-uv",pointCount*2*4).use { memory ->
                                 val mapped = memory.mapReadWrite().order(ByteOrder.nativeOrder())
                                 try { mapped.asIntBuffer().put(centers) } finally { SharedMemory.unmap(mapped) }
                                 uv!!.tensorResource = memory
@@ -128,26 +130,20 @@ class SpatialCameraRepository(private val context: Context) {
                             projection!!.submit(depthBindings,null,captureTask)
                             val points = withTimeout(5000) { xyz!!.readbackContentSuspend() }.use { content ->
                                 val bytes = content.buffer.duplicate().order(ByteOrder.nativeOrder()).apply { rewind() }
-                                require(bytes.remaining() == 48)
-                                FloatArray(12).also { bytes.asFloatBuffer().get(it) }.toList().chunked(3)
+                                require(bytes.remaining() == pointCount*3*4)
+                                FloatArray(pointCount*3).also { bytes.asFloatBuffer().get(it) }.toList().chunked(3)
                             }
-                            val estimate = runCatching { MeasureScreenUseCase()(points,board!!) }
-                            val measured = estimate.getOrNull()
-                            if (frames == 1 || frames % 10 == 0) Log.i("BridgeCamera", "depth valid=${measured != null} points=${points.flatten().joinToString(",") { "%.3f".format(java.util.Locale.ROOT,it) }}")
-                            if (measured == null) { measures.clear(); emit(ScanUpdate.Status("Depth is unstable or unavailable. Hold still, or use manual alignment.")) }
-                            else {
-                                measures += measured
-                                if (measures.size > 5) measures.removeAt(0)
-                                emit(ScanUpdate.Status("Checking depth stability · ${measures.size}/5"))
-                                if (measures.size == 5) {
-                                    val w = measures.map { it.width }.sorted()[2]; val h = measures.map { it.height }.sorted()[2]
-                                    if (measures.all { kotlin.math.abs(it.width-w) < .01f && kotlin.math.abs(it.height-h) < .01f }) {
-                                        emit(ScanUpdate.Measured(MeasuredScreen(w,h))); return@withTimeout
-                                    }
-                                }
+                            val measured = MeasureScreenSamplesUseCase()(points,samplesPerMarker,board!!)
+                            if (frames == 1 || frames % 10 == 0) Log.i("BridgeCamera", "depth valid=${measured != null} samples=$pointCount accepted=${stability.acceptedSamples}")
+                            if (measured == null) {
+                                emit(ScanUpdate.Status("Depth samples disagree. Hold still; bad readings are being rejected."))
+                            } else {
+                                val stable = stability.add(measured)
+                                emit(ScanUpdate.Status("Stabilizing depth · ${stability.acceptedSamples}/${stability.requiredSamples}"))
+                                if (stable != null) { emit(ScanUpdate.Measured(stable)); return@withTimeout }
                             }
                         } else {
-                            measures.clear()
+                            stability = StabilizeScreenSizeUseCase()
                             emit(ScanUpdate.Status("Markers visible · ${found.size}/4 · step back until all corners fit"))
                         }
                     }
@@ -179,8 +175,14 @@ class SpatialCameraRepository(private val context: Context) {
             val found = detected.keys.intersect((0..3).toSet())
             if (found.size != 4) return null to found
             return (0..3).flatMap { id ->
-                val points = (0..3).map { detected.getValue(id).get(0,it) }
-                listOf(points.map { it[0] }.average().toInt(),points.map { it[1] }.average().toInt())
+                val corners = (0..3).map { detected.getValue(id).get(0,it) }
+                (0..4).flatMap { row -> (0..4).flatMap { column ->
+                    val u=.25+column*.125; val v=.25+row*.125
+                    (0..1).map { axis ->
+                        ((1-v)*((1-u)*corners[0][axis]+u*corners[1][axis])+
+                            v*((1-u)*corners[3][axis]+u*corners[2][axis])).toInt()
+                    }
+                } }
             }.toIntArray() to found
         } finally { image.release(); gray.release(); ids.release(); corners.forEach { it.release() } }
     }
