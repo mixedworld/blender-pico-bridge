@@ -28,6 +28,7 @@ fun BridgeScreen(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     LaunchedEffect(model) {
         if (state.endpoint.isNotBlank() && state.token.isNotBlank() && state.phase == "disconnected") model.onEvent(BridgeUiEvent.Connect)
+        else if (state.endpoint.isBlank() || state.token.isBlank()) model.onEvent(BridgeUiEvent.ConnectionPanelChanged(true))
     }
     LaunchedEffect(state.autoRoom) {
         if (state.autoRoom) {

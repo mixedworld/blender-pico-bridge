@@ -50,7 +50,7 @@ python3 tools/package_release.py
 
 On Windows use `py -3 tools/package_release.py` if Python is not exposed as `python3`. This emits the add-on ZIP, the built APK and `SHA256SUMS` into `dist/release/`. It refuses an APK whose occlusion bundle differs from source, whose bundle is compressed in the APK, or which lacks either required ABI. It also checks package payloads for known local path prefixes and, when present locally, the private pairing token.
 
-For the add-on alone, use `python3 tools/package_release.py --addon-only`. ZIP contents come from the three add-on source files and the MIT license, with fixed metadata for reproducibility. No local scenes, tokens or installed Python packages are included.
+For the add-on alone, use `python3 tools/package_release.py --addon-only`. ZIP contents come from the explicit source allowlist and MIT license, with fixed metadata for reproducibility. This branch also includes the MIT-licensed Nayuki QR encoder. No local scenes, tokens or installed Python packages are included.
 
 The APK is debug-signed using the build machine’s debug keystore. Prefer a release asset built once for all users; independently built debug APKs can have different signatures. See [installation troubleshooting](TROUBLESHOOTING.md).
 

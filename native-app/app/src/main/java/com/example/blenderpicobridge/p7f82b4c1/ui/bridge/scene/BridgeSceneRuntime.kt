@@ -63,6 +63,10 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private var half = Vector3.ZERO
     private var resetCounter = 0
     private var inspectionScale = 1f
+    private var linkedViewport = false
+    private var linkedSnapshot: InspectionPose? = null
+    private var linkedDistance = 1f
+    private var linkedRevision: String? = null
     private val transform get() = inspectionCarrier.components[TransformComponent::class.java]!!
 
     fun attach(value: SpatialViewContent) {
@@ -212,7 +216,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         sequence = packet.sequence
         latest = packet
         applyPose(packet, controllers, nodes)
-        if (!contained()) {
+        if (!linkedViewport && !contained()) {
             reset()
             // Animated bounds can exceed the initial sphere. Keep the current pose contained.
             val bounds = model?.getVisualBounds(inspectionCarrier, true, true) ?: return
@@ -282,6 +286,18 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             }
             return
         }
+        if (linkedViewport) {
+            val anchor = if (room) homeRotation else Quat()
+            val pan = anchor.conjugate().rotateVector(moved-origin) * (1f / max(if (room) calibration.height else half.y*2f,.1f))
+            val relative = anchor.conjugate()*rotation*anchor
+            val zoom = if (mode == InspectionMode.SCALE) value.scaleValue else 1f
+            if (zoom.isFinite() && zoom > 0f) event(BridgeUiEvent.MoveViewport(ViewportDelta(pan.values(),relative.values(),zoom)))
+            if (mode == InspectionMode.EXPLODE) {
+                val amount = explosionLayer.fromSpan(explosion,value.scaleValue)
+                setInspection(mode,amount); event(BridgeUiEvent.ExplosionChanged(amount))
+            }
+            return
+        }
         if (mode == InspectionMode.EXPLODE) {
             val amount = explosionLayer.fromSpan(explosion, value.scaleValue)
             setInspection(mode, amount)
@@ -309,12 +325,17 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     }
 
     fun preferences(feed: SceneFeed) {
+        if (feed.linkViewport != linkedViewport && model != null) {
+            linkedViewport = feed.linkViewport
+            if (linkedViewport) { linkedSnapshot = snapshot(); linkedDistance = latest?.viewport?.distance ?: 1f; linkedRevision = revision }
+            else { if (linkedRevision == revision) linkedSnapshot?.let(::restorePose); linkedSnapshot = null; linkedRevision = null }
+        }
         if (hover != feed.hover) {
             hover = feed.hover
             if (hover) inspectionCarrier.components.set(HoverEffectComponent())
             else inspectionCarrier.components.remove(HoverEffectComponent::class.java)
         }
-        hideSource = feed.hideSource
+        hideSource = feed.hideSource && !linkedViewport
         calibration = feed.monitor
         if (room && calibration.enabled) {
             if (monitor == null) monitor = MonitorThreshold(placementOwner).also { mask -> model?.let(mask::bindModel) }
@@ -344,6 +365,19 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
                 SceneCommand.RESET_TAKE -> stagedPose?.let { restorePose(it); fitBehindMonitor(); event(BridgeUiEvent.Feedback("Model reset behind monitor.")); logMonitorBounds() }
                     ?: stageTake()
                 SceneCommand.NONE -> Unit
+            }
+        }
+        if (linkedViewport) latest?.let { packet ->
+            val view = packet.viewport
+            val source = linkedSnapshot
+            if (view != null && source != null && packet.viewQuaternion != null) {
+                val fit = (source.fitScale*linkedDistance/view.distance).coerceIn(.00001f,1000f)
+                val pivot = Vector3(view.pivot[0],view.pivot[2],-view.pivot[1])
+                transform.position = source.position.vector()
+                transform.quaternion = (if (room) homeRotation else Quat())*packet.viewQuaternion.quat()
+                transform.scaleVector = Vector3(1f,1f,1f); inspectionScale = 1f
+                fittedSceneRoot.components[TransformComponent::class.java]!!.apply { scaleVector=Vector3(fit,fit,fit);position=pivot*(-fit) }
+                updateGrabBounds()
             }
         }
         updateSourceVisibility()

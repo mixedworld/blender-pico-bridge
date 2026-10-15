@@ -2,7 +2,7 @@
 
 Existing PICO Spatial SDK project, BOM **6.1.9**. The application ID is `com.example.blenderpicobridge.p7f82b4c1`. Preserve the generated launch chain: `platform/LaunchActivity.kt` → `platform/SpatialApplication.kt` → `Main.kt`.
 
-The supported public workflow is Preview in PICO OS 6.1 Emulator. Room/monitor/casting code is experimental. Automatic/four-corner/curved monitor calibration is not implemented. The project has not passed a complete visual-design fidelity review; do not claim one.
+The supported public workflow is Preview in PICO OS 6.1 Emulator. Room/monitor/casting code is experimental. The experimental QR/depth/viewport-link branch is documented in docs/QR_ALIGNMENT.md at the repository root. Real-device QR pairing over USB is verified; depth size measurement, automatic world placement and curved monitor calibration are not yet verified. The project has not passed a complete visual-design fidelity review; do not claim one.
 
 Key files are `ui/bridge/scene/BridgeSceneRuntime.kt` for placement/animation/manipulation, `MonitorThreshold.kt` for occlusion, `data/repository/HttpBridgeRepository.kt` for transport, and `ui/bridge/components/BridgeControls.kt` for controls. Preserve separate placement, inspection, fit and authored-model transforms.
 

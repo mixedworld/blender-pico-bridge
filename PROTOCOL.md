@@ -77,3 +77,22 @@ A hidden lease expires after eight seconds unless renewed. The native client ren
 every 2.5 seconds while fully extracted and the optional Room setting is enabled.
 Reset, disabling, leaving Room and disconnect request restoration. Source visibility
 is reversible and does not modify saved files, geometry, transforms or timeline.
+
+## Experimental 0.4 additions
+
+The sidebar QR encodes `blender-pico://pair?v=1&endpoint=<url-encoded-http-endpoint>&token=<url-encoded-bearer>&session=<server-session>`.
+It is a credential: never include a real QR in public evidence. The native auto-scan parser rejects other schemes, unknown/duplicate fields, public or DNS hosts and malformed credentials. It restricts automatic endpoints to private/loopback literal IPv4 HTTP addresses. Manual pairing retains the existing endpoint validation. A scanned connection checks the expected session before accepting state or model bytes.
+
+State optionally includes `calibrationBoard:{version:1,dictionary:"DICT_4X4_50",width,height,markers:[{id,rect:[x,y,width,height]}]}`. Coordinates are integer pixels from the selected viewport's **top left**, matching marker IDs 0/TL, 1/TR, 2/BR and 3/BL. These are display coordinates, not physical dimensions or world coordinates. An absent board means the overlay is off or the viewport cannot display it.
+
+`viewport:{location:[x,y,z],rotation:[x,y,z,w],distance,perspective,lens,width,height}` describes the selected Blender viewport in Blender Z-up units/axes. `viewQuaternion` remains the derived mapping from exported Y-up geometry into viewport camera axes. `viewportControlEnabled` is true only with Blender-side opt-in, a live target viewport and a non-CAMERA perspective.
+
+`POST /v1/viewport-delta` requires the same authorization and exactly:
+
+```json
+{"session":"current-server-session","requestId":"unique-request-id","pan":[0.02,0,0],"rotation":[0,0,0,1],"zoom":1.05}
+```
+
+The body limit is 2048 bytes; IDs are 1–64 characters, pan components are finite in [-1,1], rotation is a normalized quaternion, and zoom is finite in [0.25,4]. Pan is expressed in viewport camera axes as fractions of the vertical view span at the pivot; positive object pan moves the view pivot oppositely. Rotation becomes inverse viewport orbit and zoom divides view distance. The server rejects disabled/old sessions (409), a second pending command (429) and invalid bodies (400). It accepts one pending command (202), deduplicates 128 recent request IDs (200), and discards commands older than 0.5 seconds. `lastViewportRequest` acknowledges the most recently applied command. This is bounded live navigation, not an exactly-once durable command queue.
+
+Only Blender's main-thread timer touches `RegionView3D`. Object matrices, scene-camera transforms, saved files and timeline stay unchanged. Native gestures aggregate at roughly 13 Hz, and their inspection representation follows the reported pivot/orientation/distance. The link defaults off, requires both peers to opt in and stops on transport failure/disconnect/model replacement/space change. Source hiding is suppressed while linked. This does not synchronize stereo projection or shading; see [QR alignment limits](docs/QR_ALIGNMENT.md).

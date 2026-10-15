@@ -26,6 +26,7 @@ androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "annotation" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+spatial-ml-securemr = { group = "com.pico.spatial.ml", name = "securemr" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

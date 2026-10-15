@@ -2,7 +2,18 @@ package com.example.blenderpicobridge.p7f82b4c1.domain.model
 
 import java.io.File
 
-data class Pairing(val endpoint: String = "", val token: String = "")
+data class Pairing(val endpoint: String = "", val token: String = "", val expectedSession: String? = null)
+data class MarkerRect(val id: Int, val x: Int, val y: Int, val width: Int, val height: Int)
+data class CalibrationBoard(val width: Int, val height: Int, val markers: List<MarkerRect>)
+data class MeasuredScreen(val width: Float, val height: Float)
+data class ViewportDelta(val pan: List<Float> = listOf(0f,0f,0f), val rotation: List<Float> = listOf(0f,0f,0f,1f), val zoom: Float = 1f)
+data class ViewportFrame(val pivot: List<Float>, val distance: Float)
+enum class ScanPurpose { PAIRING, DEPTH }
+sealed interface ScanUpdate {
+    data class Status(val text: String) : ScanUpdate
+    data class Paired(val pairing: Pairing) : ScanUpdate
+    data class Measured(val screen: MeasuredScreen) : ScanUpdate
+}
 data class NodePose(val name: String, val position: List<Float>, val quaternion: List<Float>, val scale: List<Float>)
 data class ExplosionPart(val name: String, val offset: List<Float>)
 enum class InspectionMode { SCALE, EXPLODE }
@@ -17,6 +28,8 @@ data class FramePacket(
     val modelName: String, val frame: Int, val playing: Boolean, val timeSeconds: Float,
     val poses: List<NodePose>, val error: String?, val textureCount: Int, val animationCount: Int,
     val explodeParts: List<ExplosionPart> = emptyList(), val viewQuaternion: List<Float>? = null, val sourceHidden: Boolean = false,
+    val board: CalibrationBoard? = null, val viewportControlEnabled: Boolean = false,
+    val viewport: ViewportFrame? = null,
 )
 sealed interface BridgeUpdate {
     data class Status(val phase: String, val message: String) : BridgeUpdate
@@ -27,4 +40,5 @@ data class SceneFeed(val file: File? = null, val packet: FramePacket? = null, va
     val mode: InspectionMode = InspectionMode.SCALE, val explosion: Float = 0f,
     val hideSource: Boolean = true, val hover: Boolean = false, val monitor: MonitorCalibration = MonitorCalibration(),
     val command: SceneCommand = SceneCommand.NONE, val commandSequence: Int = 0,
-    val previewPose: InspectionPose? = null, val roomPose: InspectionPose? = null, val debugReveal: Float? = null)
+    val previewPose: InspectionPose? = null, val roomPose: InspectionPose? = null, val debugReveal: Float? = null,
+    val linkViewport: Boolean = false)
