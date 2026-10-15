@@ -14,9 +14,21 @@ data class BridgeUiState(
     val scanPurpose: ScanPurpose? = null, val scanRequest: Int = 0, val scanStatus: String = "",
     val measuredScreen: MeasuredScreen? = null,
     val manualConnection: Boolean = false,
+    val touchPhase: TouchAlignmentPhase = TouchAlignmentPhase.NONE, val touchingHand: TouchingHand = TouchingHand.RIGHT,
+    val touchCount: Int = 0, val touchStatus: String = "Bring the touching fingertip into view.",
+    val touchedMonitor: MonitorCalibration? = null, val touchApplied: Boolean = false,
     val linkViewport: Boolean = false, val viewportAllowed: Boolean = false,
 )
 sealed interface BridgeUiEvent {
+    data object OpenTouchAlignment : BridgeUiEvent
+    data class TouchHandChanged(val hand: TouchingHand) : BridgeUiEvent
+    data object StartTouchAlignment : BridgeUiEvent
+    data object RestartTouchAlignment : BridgeUiEvent
+    data class CancelTouchAlignment(val request: Int? = null) : BridgeUiEvent
+    data class TouchProgress(val request: Int,val count: Int,val status: String) : BridgeUiEvent
+    data class TouchMeasured(val request: Int,val calibration: MonitorCalibration) : BridgeUiEvent
+    data class TouchInvalid(val request: Int,val message: String) : BridgeUiEvent
+    data object UseTouchedAlignment : BridgeUiEvent
     data class ScanRequested(val purpose: ScanPurpose) : BridgeUiEvent
     data object ScanAuthorized : BridgeUiEvent
     data class ScanFailed(val message: String) : BridgeUiEvent

@@ -104,6 +104,16 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         Log.i("BlenderBridge", "VIEWER_PLACEMENT head=$position rotation=$rotation home=$homePosition tracking=true worldLocked=true")
     }
 
+    /** Contacts are Stage/global meters; the monitor anchor is owned by placementOwner. */
+    fun monitorFromTouches(request: com.example.blenderpicobridge.p7f82b4c1.domain.model.TouchAlignmentRequest,
+        points: List<List<Float>>): MonitorCalibration {
+        check(room && content != null)
+        val fit=com.example.blenderpicobridge.p7f82b4c1.domain.usecase.FitTouchedScreenUseCase()(points,request.board)
+        val p=placementOwner.convertPositionFrom(Vector3(fit.center[0],fit.center[1],fit.center[2]),null)
+        val q=placementOwner.convertRotationFrom(Quat(fit.rotation[0],fit.rotation[1],fit.rotation[2],fit.rotation[3]),null)
+        return calibration.copy(enabled=true,editing=true,locked=false,width=fit.width,height=fit.height,position=p.values(),quaternion=q.values())
+    }
+
     fun measure() {
         if (room) return
         val value = content ?: return
@@ -337,7 +347,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         }
         hideSource = feed.hideSource && !linkedViewport
         calibration = feed.monitor
-        if (room && calibration.enabled) {
+        if (room && calibration.enabled && feed.touchAlignment == null) {
             if (monitor == null) monitor = MonitorThreshold(placementOwner).also { mask -> model?.let(mask::bindModel) }
             model?.let { monitor?.bindModel(it) }
             monitor?.update(calibration)

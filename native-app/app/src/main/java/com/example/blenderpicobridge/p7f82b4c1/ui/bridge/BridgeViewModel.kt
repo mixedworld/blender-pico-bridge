@@ -101,14 +101,51 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         _state.update { it.copy(monitor = next) }
         _scene.update { it.copy(monitor = next) }
     }
+    private var touchSequence=0
+    private fun cancelTouch(request: Int? = null) {
+        if (request != null && _scene.value.touchAlignment?.id != request) return
+        _scene.update { it.copy(touchAlignment=null) }
+        _state.update { it.copy(touchPhase=TouchAlignmentPhase.NONE,touchCount=0,touchedMonitor=null) }
+    }
+    private fun setupTouch() {
+        stopScan();cancelTouch();linkViewport(false)
+        if (state.value.room && state.value.monitor.editing) _state.update { it.copy(touchPhase=TouchAlignmentPhase.SETUP,touchApplied=false) }
+    }
+    private fun startTouch() {
+        val board=_scene.value.packet?.board
+        if (!state.value.room || !state.value.monitor.editing || board == null) {
+            _state.update { it.copy(touchPhase=TouchAlignmentPhase.INVALID,touchStatus="Show the four Blender markers, then restart.") };return
+        }
+        stopScan();touchSequence++
+        _state.update { it.copy(touchPhase=TouchAlignmentPhase.CAPTURE,touchCount=0,touchedMonitor=null,touchStatus="Bring the touching fingertip into view.") }
+        _scene.update { it.copy(touchAlignment=TouchAlignmentRequest(touchSequence,state.value.touchingHand,board)) }
+    }
     fun onEvent(event: BridgeUiEvent) {
         when (event) {
+            BridgeUiEvent.OpenTouchAlignment, BridgeUiEvent.RestartTouchAlignment -> setupTouch()
+            is BridgeUiEvent.TouchHandChanged -> if (state.value.touchPhase == TouchAlignmentPhase.SETUP) _state.update { it.copy(touchingHand=event.hand) }
+            BridgeUiEvent.StartTouchAlignment -> startTouch()
+            is BridgeUiEvent.CancelTouchAlignment -> cancelTouch(event.request)
+            is BridgeUiEvent.TouchProgress -> if (_scene.value.touchAlignment?.id == event.request) _state.update { it.copy(touchCount=event.count,touchStatus=event.status) }
+            is BridgeUiEvent.TouchMeasured -> if (_scene.value.touchAlignment?.id == event.request) {
+                _scene.update { it.copy(touchAlignment=null) }
+                _state.update { it.copy(touchPhase=TouchAlignmentPhase.REVIEW,touchCount=4,touchedMonitor=event.calibration) }
+            }
+            is BridgeUiEvent.TouchInvalid -> if (_scene.value.touchAlignment?.id == event.request) {
+                _scene.update { it.copy(touchAlignment=null) }
+                _state.update { it.copy(touchPhase=TouchAlignmentPhase.INVALID,touchedMonitor=null,touchStatus=event.message) }
+            }
+            BridgeUiEvent.UseTouchedAlignment -> state.value.touchedMonitor?.let { result ->
+                monitor { result.copy(enabled=true,editing=true,locked=false) }
+                cancelTouch()
+                _state.update { it.copy(touchApplied=true,note="Touch alignment applied. Check the monitor plane, then choose Lock alignment in the alignment controls.") }
+            }
             is BridgeUiEvent.LinkViewport -> linkViewport(event.enabled)
             is BridgeUiEvent.MoveViewport -> if (state.value.linkViewport) runCatching { MergeViewportDeltaUseCase()(pendingViewport,event.delta) }.getOrNull()?.let { pendingViewport = it }
-            is BridgeUiEvent.ScanRequested -> requestScan(event.purpose)
+            is BridgeUiEvent.ScanRequested -> { cancelTouch();requestScan(event.purpose) }
             BridgeUiEvent.ScanAuthorized -> startScan()
             is BridgeUiEvent.ScanFailed -> { stopScan(); _state.update { it.copy(scanStatus = event.message) } }
-            BridgeUiEvent.StopScan -> stopScan()
+            BridgeUiEvent.StopScan -> { stopScan();cancelTouch() }
             BridgeUiEvent.ManualConnection -> { stopScan(); _state.update { it.copy(manualConnection = true) } }
             BridgeUiEvent.UseMeasuredSize -> state.value.measuredScreen?.let { size ->
                 monitor { it.copy(width = size.width,height = size.height,editing = true,locked = false,enabled = true) }
@@ -123,12 +160,13 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             }
             is BridgeUiEvent.SourceHidden -> if (sourceHidden != event.hidden) sourceVisibility(event.hidden && state.value.hideSource && state.value.room)
             is BridgeUiEvent.HoverChanged -> { _state.update { it.copy(hover = event.enabled) }; _scene.update { it.copy(hover = event.enabled) } }
-            is BridgeUiEvent.CollapseChanged -> { if (event.collapsed) stopScan(); _state.update { it.copy(collapsed = event.collapsed) } }
+            is BridgeUiEvent.CollapseChanged -> { if (event.collapsed) { stopScan();cancelTouch() }; _state.update { it.copy(collapsed = event.collapsed) } }
             is BridgeUiEvent.ConnectionPanelChanged -> {
-                stopScan(); _state.update { it.copy(connectionPanel = event.visible, collapsed = false, manualConnection = false) }
+                stopScan(); cancelTouch(); _state.update { it.copy(connectionPanel = event.visible, collapsed = false, manualConnection = false) }
                 if (event.visible) requestScan(ScanPurpose.PAIRING)
             }
             is BridgeUiEvent.RoomChanged -> {
+                if (!event.room) cancelTouch()
                 linkViewport(false)
                 _state.update { it.copy(room = event.room, autoRoom = false, enteringRoom = false) }
                 if (!event.room && sourceHidden) sourceVisibility(false)
@@ -139,8 +177,8 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             BridgeUiEvent.Fit -> command(SceneCommand.FIT)
             BridgeUiEvent.SourceSize -> command(SceneCommand.SOURCE_SIZE)
             BridgeUiEvent.AlignMonitor -> if (state.value.room) { monitor { it.copy(enabled = true, editing = true, locked = false) }; _state.update { it.copy(collapsed = false, connectionPanel = false) } }
-            BridgeUiEvent.LockMonitor -> { monitor { it.copy(editing = false, locked = true) }; _state.update { it.copy(note = "Alignment locked. Grab the staged model through the monitor.") } }
-            BridgeUiEvent.LeaveMonitor -> { stopScan(); monitor { it.copy(editing = false, enabled = it.locked) } }
+            BridgeUiEvent.LockMonitor -> { cancelTouch(); monitor { it.copy(editing = false, locked = true) }; _state.update { it.copy(note = "Alignment locked. Grab the staged model through the monitor.") } }
+            BridgeUiEvent.LeaveMonitor -> { stopScan(); cancelTouch(); monitor { it.copy(editing = false, enabled = it.locked) } }
             BridgeUiEvent.StageTake -> { sourceVisibility(false); command(SceneCommand.STAGE_TAKE) }
             BridgeUiEvent.ResetTake -> if (state.value.monitor.locked) { sourceVisibility(false); command(SceneCommand.RESET_TAKE) } else _state.update { it.copy(note = "Align and lock the monitor first.") }
             is BridgeUiEvent.MonitorWidth -> if (event.value.isFinite()) monitor { it.copy(width = event.value.coerceIn(.1f, 2f)) }
@@ -149,6 +187,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             BridgeUiEvent.Connect -> { stopScan(); open() }
             BridgeUiEvent.Refresh -> { stopScan(); open(refresh = true) }
             BridgeUiEvent.Disconnect -> {
+                cancelTouch()
                 linkViewport(false)
                 stopScan()
                 if (sourceHidden) sourceVisibility(false)
