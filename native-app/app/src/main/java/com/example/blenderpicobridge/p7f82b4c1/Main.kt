@@ -2,6 +2,7 @@ package com.example.blenderpicobridge.p7f82b4c1
 
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.BridgeScreen
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.RoomScreen
+import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.toolsWindow
 import com.pico.spatial.ui.foundation.dsl.Stage
 import com.pico.spatial.ui.design.PicoTheme
 import com.pico.spatial.ui.foundation.dsl.DefaultWindowContainer
@@ -25,5 +26,6 @@ fun mainApp(scope: SpatialAppScope) =
                 ))
             }
         }
+        toolsWindow()
         Stage(id = "BlenderRoom") { PicoTheme { RoomScreen() } }
     }

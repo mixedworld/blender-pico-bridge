@@ -4,6 +4,8 @@ Existing PICO Spatial SDK project, BOM **6.1.9**. The application ID is `com.exa
 
 The supported public workflow is Preview in PICO OS 6.1 Emulator. Room/monitor/casting code is experimental. The experimental QR/depth/viewport-link branch is documented in docs/QR_ALIGNMENT.md at the repository root. Real-device QR pairing over USB is verified; depth size measurement, automatic world placement and curved monitor calibration are not yet verified. The project has not passed a complete visual-design fidelity review; do not claim one.
 
+The toolbox is a tagged independent Planar window (`ToolsWindow.kt` / `ToolsScreen.kt`). Keep the compact `ToolsRecoveryButton` outside that window in both Preview and Room; native close must not strand controls. Room native movement and close/reopen have been verified by the user. Preview recovery still needs an interactive check.
+
 Key files are `ui/bridge/scene/BridgeSceneRuntime.kt` for placement/animation/manipulation, `MonitorThreshold.kt` for occlusion, `data/repository/HttpBridgeRepository.kt` for transport, and `ui/bridge/components/BridgeControls.kt` for controls. Preserve separate placement, inspection, fit and authored-model transforms.
 
 Use public PICO APIs and the declared SDK version. Entity/component and animation updates must happen on the main thread. Keep SpatialUI wrapped in PicoTheme; do not introduce Compose Material/Material3 components. Follow the applicable PICO development skill/workflow when editing SDK scene or UI behavior.
