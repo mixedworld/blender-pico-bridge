@@ -32,6 +32,7 @@ internal fun BridgeControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         when {
             state.connectionPanel -> ConnectionControls(state, event)
+            setup && state.touchPhase != com.example.blenderpicobridge.p7f82b4c1.domain.model.TouchAlignmentPhase.NONE -> TouchAlignmentControls(state,event)
             setup -> MonitorControls(state, event)
             else -> {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -77,6 +78,8 @@ internal fun BridgeControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit
 @Composable
 private fun ColumnScope.MonitorControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit) {
     Body("Align monitor")
+    Action("Touch marker centers", { event(BridgeUiEvent.OpenTouchAlignment) }, Modifier.fillMaxWidth(),state.scanPurpose == null)
+    if (state.touchApplied) TouchBody("Touch alignment applied. Check the monitor plane, then choose Lock alignment in the alignment controls.")
     Action("Measure with markers + depth", { event(BridgeUiEvent.ScanRequested(ScanPurpose.DEPTH)) }, Modifier.fillMaxWidth(), state.scanPurpose == null)
     if (state.scanStatus.isNotBlank()) Label(state.scanStatus)
     if (state.scanPurpose != null) Action("Stop scanning", { event(BridgeUiEvent.StopScan) }, Modifier.fillMaxWidth())

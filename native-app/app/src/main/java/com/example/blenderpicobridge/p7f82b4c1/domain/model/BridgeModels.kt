@@ -41,4 +41,4 @@ data class SceneFeed(val file: File? = null, val packet: FramePacket? = null, va
     val hideSource: Boolean = true, val hover: Boolean = false, val monitor: MonitorCalibration = MonitorCalibration(),
     val command: SceneCommand = SceneCommand.NONE, val commandSequence: Int = 0,
     val previewPose: InspectionPose? = null, val roomPose: InspectionPose? = null, val debugReveal: Float? = null,
-    val linkViewport: Boolean = false)
+    val linkViewport: Boolean = false, val touchAlignment: TouchAlignmentRequest? = null)

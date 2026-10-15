@@ -2,7 +2,9 @@
 
 Existing PICO Spatial SDK project, BOM **6.1.9**. The application ID is `com.example.blenderpicobridge.p7f82b4c1`. Preserve the generated launch chain: `platform/LaunchActivity.kt` → `platform/SpatialApplication.kt` → `Main.kt`.
 
-The supported public workflow is Preview in PICO OS 6.1 Emulator. Room/monitor/casting code is experimental. The experimental QR/depth/viewport-link branch is documented in docs/QR_ALIGNMENT.md at the repository root. Real-device QR pairing over USB is verified; depth size measurement, automatic world placement and curved monitor calibration are not yet verified. The project has not passed a complete visual-design fidelity review; do not claim one.
+The supported public workflow is Preview in PICO OS 6.1 Emulator. Room/monitor/casting code is experimental. The experimental QR/depth/viewport-link branch is documented in docs/QR_ALIGNMENT.md at the repository root. Real-device QR pairing over USB and LAN is verified; depth size measurement, automatic world placement and curved monitor calibration are not yet verified. The project has not passed a complete visual-design fidelity review; do not claim one.
+
+The experimental four-marker touch fallback uses HandTrackingProvider global index-tip positions, stable samples and opposite-hand pinch. It preserves previous calibration until explicit acceptance and fits a flat proxy only; physical accuracy remains unverified. See TouchTrackingEffect.kt and StableTouchCaptureUseCase.kt.
 
 The toolbox is a tagged independent Planar window (`ToolsWindow.kt` / `ToolsScreen.kt`). Keep the compact `ToolsRecoveryButton` outside that window in both Preview and Room; native close must not strand controls. Room native movement and close/reopen have been verified by the user. Preview recovery still needs an interactive check.
 

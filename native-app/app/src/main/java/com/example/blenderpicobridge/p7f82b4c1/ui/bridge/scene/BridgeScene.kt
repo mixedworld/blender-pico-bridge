@@ -14,6 +14,12 @@ import com.pico.spatial.tracking.DataProvider
 import com.pico.spatial.ui.foundation.gesture.TargetEntity
 import com.pico.spatial.ui.foundation.gesture.detectSpatialTransformGesture
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import com.example.blenderpicobridge.p7f82b4c1.domain.model.TouchAlignmentRequest
 
 @Composable
 fun BridgeScene(feed: StateFlowHolder, modifier: Modifier, event: (BridgeUiEvent) -> Unit, room: Boolean = false, tools: (@Composable () -> Unit)? = null) {
@@ -26,10 +32,12 @@ fun BridgeScene(feed: StateFlowHolder, modifier: Modifier, event: (BridgeUiEvent
             if (hmd.state == DataProvider.State.STARTED && attached) runtime.placeForViewer(value.hmdPose.position, value.hmdPose.rotation)
         }
     }
+    val touch by remember(feed) { feed.flow.map { it.touchAlignment }.distinctUntilChanged() }.collectAsState(initial=null)
+    TouchTrackingEffect(touch,room,attached,runtime,feed,event)
     val context = LocalContext.current
     DisposableEffect(runtime) { onDispose { runtime.close() } }
     SpatialView(modifier = modifier.pointerInput(runtime) {
-        detectSpatialTransformGesture(context, targetedToEntity = TargetEntity.any { feed.flow.value.debugReveal == null && runtime.accepts(it) }, onTransform = runtime::manipulate)
+        detectSpatialTransformGesture(context, targetedToEntity = TargetEntity.any { feed.flow.value.debugReveal == null && feed.flow.value.touchAlignment == null && runtime.accepts(it) }, onTransform = runtime::manipulate)
     }, initial = { content, attachments ->
         runtime.attach(content)
         attachments.entity("room-tools")?.let {

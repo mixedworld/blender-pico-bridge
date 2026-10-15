@@ -150,4 +150,39 @@ class BridgeViewModelTest {
         settingsModel.onEvent(BridgeUiEvent.Disconnect)
     }
 
+    @Test fun touchCandidateNeedsExplicitAcceptanceAndStaleDisposalCannotCancelReview() = runTest(dispatcher) {
+        val request = beginTouch()
+        val before = model.scene.value.monitor
+        val candidate = before.copy(width=1.1f,height=.62f,position=listOf(.2f,1f,-.8f))
+        model.onEvent(BridgeUiEvent.TouchMeasured(request,candidate))
+        model.onEvent(BridgeUiEvent.CancelTouchAlignment(request))
+        assertEquals(TouchAlignmentPhase.REVIEW,model.state.value.touchPhase)
+        assertEquals(before,model.scene.value.monitor)
+        model.onEvent(BridgeUiEvent.UseTouchedAlignment)
+        assertEquals(candidate,model.scene.value.monitor)
+        assertFalse(model.scene.value.monitor.locked)
+        assertTrue(model.state.value.touchApplied)
+    }
+    @Test fun leavingAlignmentRejectsLateTouchesAndPreservesPreviousCalibration() = runTest(dispatcher) {
+        val request = beginTouch()
+        val before = model.scene.value.monitor
+        model.onEvent(BridgeUiEvent.CancelTouchAlignment())
+        model.onEvent(BridgeUiEvent.TouchMeasured(request,before.copy(width=1.5f)))
+        assertEquals(before,model.scene.value.monitor)
+        assertNull(model.scene.value.touchAlignment)
+        assertEquals(TouchAlignmentPhase.NONE,model.state.value.touchPhase)
+        beginTouch()
+        model.onEvent(BridgeUiEvent.RoomChanged(false))
+        assertNull(model.scene.value.touchAlignment)
+    }
+    private suspend fun TestScope.beginTouch(): Int {
+        model.onEvent(BridgeUiEvent.Connect);runCurrent()
+        val board=CalibrationBoard(1920,1080,listOf(MarkerRect(0,24,24,96,96),MarkerRect(1,1800,24,96,96),MarkerRect(2,1800,960,96,96),MarkerRect(3,24,960,96,96)))
+        val packet=FramePacket("touch",1,"a".repeat(64),null,"Model",1,false,0f,emptyList(),null,0,0,board=board)
+        repository.events.emit(BridgeUpdate.Model(packet,File("model.glb")));runCurrent()
+        model.onEvent(BridgeUiEvent.RoomChanged(true));model.onEvent(BridgeUiEvent.AlignMonitor)
+        model.onEvent(BridgeUiEvent.OpenTouchAlignment);model.onEvent(BridgeUiEvent.StartTouchAlignment)
+        return requireNotNull(model.scene.value.touchAlignment).id
+    }
+
 }
