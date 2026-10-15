@@ -1,6 +1,6 @@
 bl_info = {
     "name": "PICO Blender Bridge", "author": "PICO Blender Bridge",
-    "version": (0, 3, 0), "blender": (4, 2, 0),
+    "version": (0, 4, 0), "blender": (4, 2, 0),
     "location": "3D View > Sidebar > PICO Bridge",
     "description": "Live PBR model and Blender timeline bridge to PICO Spatial SDK",
     "category": "3D View",
@@ -16,6 +16,8 @@ import time
 from bpy.app.handlers import persistent
 from .server import BridgeServer
 from .glb import with_explosion_parts
+from .pairing import pairing_payload
+from .display import PairingDisplay
 
 _server = None
 _exporting = False
@@ -28,6 +30,8 @@ _clip_start = 1
 _clip_fps = 24.0
 _export_signature = None
 _message = "Stopped"
+_display = None
+_auto_start_attempted = False
 
 
 def settings():
@@ -178,6 +182,23 @@ def tick():
     update_source_visibility(_server.source_hidden())
     scene = bpy.context.scene
     cfg = scene.pico_bridge
+    area, region = _display.target() if _display else (None, None)
+    if _display:
+        _display.update(time.monotonic() - _server.last_client < 3)
+    viewport = area.spaces.active.region_3d if area else None
+    command = _server.take_viewport_command()
+    if command and cfg.allow_viewport_control and viewport and region and viewport.view_perspective != 'CAMERA':
+        from mathutils import Quaternion, Vector
+        # Inverse viewport orbit/pan/zoom, never authored object transforms.
+        x,y,z,w = command['rotation']
+        rotation = Quaternion((w,x,y,z)).normalized()
+        projection = viewport.window_matrix
+        span = 2 * (viewport.view_distance if viewport.view_perspective == 'PERSP' else 1) / max(abs(projection[1][1]), .0001)
+        viewport.view_location -= viewport.view_rotation @ (Vector(command['pan']) * span)
+        viewport.view_rotation = viewport.view_rotation @ rotation.conjugated()
+        viewport.view_distance = max(.001, min(1e6, viewport.view_distance / command['zoom']))
+        area.tag_redraw()
+        _server.publish_state({'lastViewportRequest': command['requestId']})
     playing = any(screen.is_animation_playing for screen in bpy.data.screens)
     fps = scene.render.fps / scene.render.fps_base
     if cfg.auto_export and _export_signature != (scene.frame_start, scene.frame_end, fps) and not _dirty_at:
@@ -201,19 +222,21 @@ def tick():
     # Map exported Y-up geometry into the active Blender viewport's camera axes.
     # The model keeps this snapshot only when the user stages a take in PICO.
     view_rotation = None
-    for window in bpy.context.window_manager.windows:
-        for area in window.screen.areas:
-            if area.type == "VIEW_3D":
-                q = (area.spaces.active.region_3d.view_rotation.inverted().to_matrix()
-                     @ basis.to_3x3().inverted()).to_quaternion()
-                view_rotation = [q.x, q.y, q.z, q.w]
-                break
-        if view_rotation is not None:
-            break
+    if viewport:
+        q = (viewport.view_rotation.inverted().to_matrix() @ basis.to_3x3().inverted()).to_quaternion()
+        view_rotation = [q.x,q.y,q.z,q.w]
+    view_state = None
+    if viewport and region:
+        q = viewport.view_rotation
+        view_state = {'location': list(viewport.view_location), 'rotation': [q.x,q.y,q.z,q.w],
+                      'distance': viewport.view_distance, 'perspective': viewport.view_perspective,
+                      'lens': area.spaces.active.lens, 'width': region.width, 'height': region.height}
     _server.publish_state({"frame": scene.frame_current, "frameStart": scene.frame_start,
                            "frameEnd": scene.frame_end, "fps": fps, "playing": playing,
                            "timeSeconds": (scene.frame_current - _clip_start) / _clip_fps,
                            "transforms": transforms, "viewQuaternion": view_rotation, "sourceHidden": bool(_source_visibility),
+                           "viewport": view_state, "viewportControlEnabled": bool(cfg.allow_viewport_control and viewport and viewport.view_perspective != 'CAMERA'),
+                           "calibrationBoard": _display.board if _display else None,
                            "sentAtUnixMs": time.time_ns() // 1000000})
     if cfg.auto_export and _dirty_at and not _source_visibility and not playing and time.monotonic() - _dirty_at > 0.75:
         try:
@@ -241,41 +264,72 @@ def changed(scene, depsgraph):
 
 @persistent
 def loaded(_):
+    global _auto_start_attempted
     stop_bridge()
+    _auto_start_attempted = False
 
 
 def start_bridge():
-    global _server, _scope, _message
+    global _server, _scope, _message, _display
     if _server:
         return
     cfg = settings()
     _scope = [obj.name for obj in bpy.context.view_layer.objects if obj.select_get()]
     _server = BridgeServer(port=cfg.port, token=cfg.token or None)
     cfg.token = _server.token
+    area = bpy.context.area
+    if not area or area.type != 'VIEW_3D':
+        area = next((a for w in bpy.context.window_manager.windows for a in w.screen.areas if a.type == 'VIEW_3D'), None)
+    _display = PairingDisplay(pairing_payload(pairing_endpoint(), cfg.token, _server.session), area)
     bpy.app.timers.register(tick, first_interval=0.05)
     _message = "Listening"
-    export_model()
+    try:
+        export_model()
+    except Exception as exc:
+        _message = 'Bridge ready · choose geometry and Refresh Model'
+        _server.publish_state({'error': str(exc)})
 
 
 def stop_bridge():
-    global _server, _message
+    global _server, _message, _display
     restore_source_visibility()
     current, _server = _server, None
     if current:
         current.close()
+    if _display:
+        _display.close()
+        _display = None
     if bpy.app.timers.is_registered(tick):
         bpy.app.timers.unregister(tick)
     _message = "Stopped"
 
 
+def pairing_endpoint():
+    cfg = settings()
+    host = '127.0.0.1' if cfg.pairing_route == 'USB' else lan_address()
+    return f'http://{host}:{_server.port if _server else cfg.port}'
+
+
+def pairing_route_changed(_self, _context):
+    if _display and _server:
+        _display.set_payload(pairing_payload(pairing_endpoint(), settings().token, _server.session))
+        _display.update(time.monotonic() - _server.last_client < 3)
+
+
 class PicoBridgeSettings(bpy.types.PropertyGroup):
     scope: bpy.props.EnumProperty(name="Source", items=[("COLLECTION", "Collection", "Publish a model collection"),
                                                        ("SELECTION", "Selection", "Selection captured when connecting"),
-                                                       ("VISIBLE", "Visible Scene", "All visible model geometry")], default="COLLECTION")
+                                                       ("VISIBLE", "Visible Scene", "All visible model geometry")], default="VISIBLE")
     collection: bpy.props.PointerProperty(name="Collection", type=bpy.types.Collection)
     port: bpy.props.IntProperty(name="Port", default=8766, min=1024, max=65535)
+    pairing_route: bpy.props.EnumProperty(name="Connect via", default='LAN', update=pairing_route_changed,
+        items=[('LAN', 'Wi-Fi / LAN', 'Both devices must reach this computer over the network'),
+               ('USB', 'USB / Emulator (ADB)', 'Requires adb reverse tcp:8766 tcp:8766 for the selected device')])
     token: bpy.props.StringProperty(name="Pairing token", subtype="PASSWORD")
     auto_export: bpy.props.BoolProperty(name="Sync model edits", default=True)
+    auto_start: bpy.props.BoolProperty(name="Start when panel opens", default=True)
+    allow_viewport_control: bpy.props.BoolProperty(name="Allow PICO viewport control", default=False,
+        description="Paired gestures adjust the viewport, never objects or the scene camera")
     last_revision: bpy.props.StringProperty()
 
 
@@ -296,6 +350,8 @@ class PICO_BRIDGE_OT_stop(bpy.types.Operator):
     bl_idname = "pico_bridge.stop"
     bl_label = "Stop Bridge"
     def execute(self, context):
+        global _auto_start_attempted
+        _auto_start_attempted = True
         stop_bridge()
         return {"FINISHED"}
 
@@ -316,8 +372,42 @@ class PICO_BRIDGE_OT_pairing(bpy.types.Operator):
     bl_idname = "pico_bridge.copy_pairing"
     bl_label = "Copy Pairing Details"
     def execute(self, context):
-        context.window_manager.clipboard = f"http://{lan_address()}:{settings().port}\n{settings().token}"
+        context.window_manager.clipboard = f"{pairing_endpoint()}\n{settings().token}"
         return {"FINISHED"}
+
+
+class PICO_BRIDGE_OT_board(bpy.types.Operator):
+    bl_idname = 'pico_bridge.calibration_board'
+    bl_label = 'Show QR and corner markers'
+    def execute(self, context):
+        if _display:
+            if context.area and context.area.type == 'VIEW_3D':
+                _display.area_id = context.area.as_pointer()
+            _display.overlay = not _display.overlay
+            _display.show_qr = _display.overlay
+            _display.update(time.monotonic() - _server.last_client < 3)
+        return {'FINISHED'}
+
+
+class PICO_BRIDGE_OT_qr(bpy.types.Operator):
+    bl_idname = 'pico_bridge.large_qr'
+    bl_label = 'Show large pairing QR'
+    def execute(self, context):
+        if _display:
+            _display.show_qr = not _display.show_qr
+            _display.update(time.monotonic() - _server.last_client < 3)
+        return {'FINISHED'}
+
+
+def auto_start_once():
+    global _auto_start_attempted, _message
+    _auto_start_attempted = True
+    try:
+        start_bridge()
+    except Exception as exc:
+        stop_bridge()
+        _message = 'Start failed: ' + str(exc)
+    return None
 
 
 def lan_address():
@@ -338,12 +428,23 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         cfg = context.scene.pico_bridge
+        layout.prop(cfg, 'auto_start')
+        if not _server and cfg.auto_start and not _auto_start_attempted and not bpy.app.timers.is_registered(auto_start_once):
+            bpy.app.timers.register(auto_start_once, first_interval=.1)
         layout.prop(cfg, "scope")
         if cfg.scope == "COLLECTION":
             layout.prop(cfg, "collection")
         layout.prop(cfg, "auto_export")
         if _server:
-            layout.label(text=f"http://{lan_address()}:{cfg.port}")
+            layout.prop(cfg, 'pairing_route')
+            layout.label(text=pairing_endpoint())
+            if cfg.pairing_route == 'USB':
+                layout.label(text=f'adb reverse tcp:{cfg.port} tcp:{cfg.port}')
+            if _display:
+                layout.template_icon(icon_value=_display.icon, scale=8)
+                layout.operator('pico_bridge.calibration_board', text='Hide markers' if _display.overlay else 'Show QR and markers')
+                layout.operator('pico_bridge.large_qr', text='Hide pairing QR' if _display.show_qr else 'Show large pairing QR')
+            layout.prop(cfg, 'allow_viewport_control')
             layout.prop(cfg, "token")
             layout.operator("pico_bridge.copy_pairing")
             layout.operator("pico_bridge.refresh")
@@ -358,7 +459,7 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
 
 
 CLASSES = (PicoBridgeSettings, PICO_BRIDGE_OT_start, PICO_BRIDGE_OT_stop,
-           PICO_BRIDGE_OT_refresh, PICO_BRIDGE_OT_pairing, PICO_BRIDGE_PT_panel)
+           PICO_BRIDGE_OT_refresh, PICO_BRIDGE_OT_pairing, PICO_BRIDGE_OT_board, PICO_BRIDGE_OT_qr, PICO_BRIDGE_PT_panel)
 
 
 def register():
@@ -371,6 +472,8 @@ def register():
 
 def unregister():
     stop_bridge()
+    if bpy.app.timers.is_registered(auto_start_once):
+        bpy.app.timers.unregister(auto_start_once)
     for handlers, callback in ((bpy.app.handlers.depsgraph_update_post, changed),
                                (bpy.app.handlers.load_pre, loaded)):
         if callback in handlers:

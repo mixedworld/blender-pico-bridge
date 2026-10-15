@@ -27,6 +27,7 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         while (currentCoroutineContext().isActive) {
             try {
                 val packet = decode(JSONObject(String(request(pairing, "/v1/state", 4 * 1024 * 1024))))
+                require(pairing.expectedSession == null || pairing.expectedSession == packet.session) { "Pairing QR expired. Scan the current Blender QR." }
                 if (packet.session != session) {
                     session = packet.session
                     sequence = -1
@@ -107,6 +108,20 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         }
     }
 
+    override suspend fun viewportDelta(pairing: Pairing, session: String, requestId: String, delta: ViewportDelta): Unit = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("session",session).put("requestId",requestId)
+            .put("pan",JSONArray(delta.pan)).put("rotation",JSONArray(delta.rotation)).put("zoom",delta.zoom)
+        val connection = URI(pairing.endpoint+"/v1/viewport-delta").toURL().openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod="POST";connection.doOutput=true;connection.connectTimeout=2000;connection.readTimeout=2000
+            connection.instanceFollowRedirects=false
+            connection.setRequestProperty("Authorization","Bearer ${pairing.token}")
+            connection.setRequestProperty("Content-Type","application/json")
+            connection.outputStream.use { it.write(body.toString().toByteArray()) }
+            check(connection.responseCode in listOf(200,202)) { "Viewport command unavailable" }
+        } finally { connection.disconnect() }
+    }
+
     private fun decode(json: JSONObject): FramePacket {
         require(json.getInt("protocol") == 1) { "Unsupported Blender bridge protocol" }
         fun JSONArray.values(count: Int): List<Float> {
@@ -117,6 +132,25 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         require(transforms.length() <= 10000) { "Too many transform nodes" }
         val parts = json.optJSONArray("explodeParts") ?: JSONArray()
         require(parts.length() <= 10000) { "Too many explosion parts" }
+        val board = json.optJSONObject("calibrationBoard")?.let { value ->
+            require(value.getInt("version") == 1 && value.getString("dictionary") == "DICT_4X4_50")
+            val width = value.getInt("width"); val height = value.getInt("height")
+            require(width in 100..20000 && height in 100..20000)
+            val markers = value.getJSONArray("markers")
+            require(markers.length() == 4)
+            CalibrationBoard(width, height, List(4) { index ->
+                val marker = markers.getJSONObject(index); val rect = marker.getJSONArray("rect")
+                require(marker.getInt("id") == index && rect.length() == 4)
+                MarkerRect(index, rect.getInt(0), rect.getInt(1), rect.getInt(2), rect.getInt(3)).also {
+                    require(it.x >= 0 && it.y >= 0 && it.width > 0 && it.height > 0 && it.x+it.width <= width && it.y+it.height <= height)
+                }
+            })
+        }
+        val viewport = json.optJSONObject("viewport")?.let { value ->
+            val distance = value.getDouble("distance").toFloat()
+            require(distance.isFinite() && distance >= 0)
+            ViewportFrame(value.getJSONArray("location").values(3),distance.coerceAtLeast(.001f))
+        }
         return FramePacket(
             json.getString("session"), json.getLong("sequence"),
             if (json.isNull("revision")) null else json.getString("revision"),
@@ -131,6 +165,7 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
                 ExplosionPart(it.getString("name"), it.getJSONArray("offset").values(3))
             } },
             json.optJSONArray("viewQuaternion")?.values(4), json.optBoolean("sourceHidden", false),
+            board, json.optBoolean("viewportControlEnabled", false),viewport,
         )
     }
 }

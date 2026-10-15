@@ -23,6 +23,32 @@ class BridgeViewModelTest {
         assertEquals("disconnected", model.state.value.phase)
         assertFalse(model.state.value.hasModel)
     }
+    @Test fun connectionStartsScanningAndManualOrCollapseStopsIt() {
+        model.onEvent(BridgeUiEvent.ConnectionPanelChanged(true))
+        assertEquals(ScanPurpose.PAIRING,model.state.value.scanPurpose)
+        assertFalse(model.state.value.manualConnection)
+        model.onEvent(BridgeUiEvent.ManualConnection)
+        assertNull(model.state.value.scanPurpose)
+        assertTrue(model.state.value.manualConnection)
+        model.onEvent(BridgeUiEvent.ScanRequested(ScanPurpose.DEPTH))
+        model.onEvent(BridgeUiEvent.CollapseChanged(true))
+        assertNull(model.state.value.scanPurpose)
+    }
+    @Test fun viewportLinkRequiresServerOptInAndAggregatesGestureEvents() = runTest(dispatcher) {
+        model.onEvent(BridgeUiEvent.LinkViewport(true))
+        assertFalse(model.state.value.linkViewport)
+        model.onEvent(BridgeUiEvent.Connect); runCurrent()
+        val packet = FramePacket("session",4,"a".repeat(64),null,"Model",1,false,0f,emptyList(),null,0,0,viewportControlEnabled=true)
+        repository.events.emit(BridgeUpdate.Model(packet,File("${packet.revision}.glb")));runCurrent()
+        model.onEvent(BridgeUiEvent.LinkViewport(true))
+        assertTrue(model.state.value.linkViewport)
+        repeat(3) { model.onEvent(BridgeUiEvent.MoveViewport(ViewportDelta(pan=listOf(.1f,0f,0f),zoom=1.1f))) }
+        advanceTimeBy(80);runCurrent()
+        assertEquals(1,repository.viewportCommands.size)
+        assertEquals(.3f,repository.viewportCommands[0].pan[0],.00001f)
+        assertEquals(1.331f,repository.viewportCommands[0].zoom,.00001f)
+        model.onEvent(BridgeUiEvent.LinkViewport(false))
+    }
     @Test fun successfulModelLoadsAndTimelineFollowsIncomingFrame() = runTest(dispatcher) {
         model.onEvent(BridgeUiEvent.Connect); runCurrent()
         val packet = FramePacket("session", 4, "a".repeat(64), null, "Robot", 60, false, 2.458f, emptyList(), null, 1, 1)

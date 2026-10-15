@@ -11,8 +11,20 @@ data class BridgeUiState(
     val room: Boolean = false, val autoRoom: Boolean = false, val enteringRoom: Boolean = false,
     val monitor: MonitorCalibration = MonitorCalibration(),
     val mode: InspectionMode = InspectionMode.SCALE, val explosion: Float = 0f, val partCount: Int = 0,
+    val scanPurpose: ScanPurpose? = null, val scanRequest: Int = 0, val scanStatus: String = "",
+    val measuredScreen: MeasuredScreen? = null,
+    val manualConnection: Boolean = false,
+    val linkViewport: Boolean = false, val viewportAllowed: Boolean = false,
 )
 sealed interface BridgeUiEvent {
+    data class ScanRequested(val purpose: ScanPurpose) : BridgeUiEvent
+    data object ScanAuthorized : BridgeUiEvent
+    data class ScanFailed(val message: String) : BridgeUiEvent
+    data object StopScan : BridgeUiEvent
+    data object UseMeasuredSize : BridgeUiEvent
+    data object ManualConnection : BridgeUiEvent
+    data class LinkViewport(val enabled: Boolean) : BridgeUiEvent
+    data class MoveViewport(val delta: ViewportDelta) : BridgeUiEvent
     data class EndpointChanged(val value: String) : BridgeUiEvent
     data class TokenChanged(val value: String) : BridgeUiEvent
     data object Connect : BridgeUiEvent

@@ -63,7 +63,8 @@ def main():
             parser.error("Build the debug APK first, or use --addon-only")
         validate_apk(args.apk, token)
     addon_zip = args.output / f"pico_blender_bridge-{version()}.zip"
-    sources = [(ADDON / name, f"pico_blender_bridge/{name}") for name in ("__init__.py", "glb.py", "server.py")]
+    sources = [(ADDON / name, f"pico_blender_bridge/{name}") for name in
+               ("__init__.py", "glb.py", "server.py", "pairing.py", "qrcodegen.py", "calibration.py", "display.py")]
     sources.append((ROOT / "LICENSE", "pico_blender_bridge/LICENSE"))
     with zipfile.ZipFile(addon_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path, name in sources:

@@ -57,6 +57,29 @@ class TransportTest(unittest.TestCase):
         with self.fetch(f"/v1/models/{revision}.glb") as response:
             self.assertEqual(response.read(), data)
 
+    def test_viewport_commands_are_opt_in_session_bound_and_deduplicated(self):
+        body = dict(session=self.server.session, requestId='gesture-1', pan=[.1,0,0], rotation=[0,0,0,1], zoom=1.2)
+        def post(value, token='test-secret'):
+            return self.post_visibility(value, token, '/v1/viewport-delta')
+        for token, code in (('wrong',401), ('test-secret',409)):
+            with self.assertRaises(urllib.error.HTTPError) as error: post(body, token)
+            self.assertEqual(error.exception.code, code)
+        self.server.publish_state({'viewportControlEnabled': True})
+        for patch in ({'zoom': 0}, {'pan': [True,0,0]}, {'rotation': [0,0,0,0]}, {'pan': [2,0,0]}, {'zoom': float('nan')}, {'extra': 1}):
+            with self.assertRaises(urllib.error.HTTPError) as error: post({**body, **patch})
+            self.assertEqual(error.exception.code, 400)
+        with self.assertRaises(urllib.error.HTTPError) as error: post({**body,'session':'old'})
+        self.assertEqual(error.exception.code,409)
+        with post(body) as response: self.assertEqual(response.status, 202)
+        with post(body) as response: self.assertEqual(response.status, 200)
+        with self.assertRaises(urllib.error.HTTPError) as error: post({**body,'requestId':'gesture-2'})
+        self.assertEqual(error.exception.code, 429)
+        self.assertEqual(self.server.take_viewport_command(), body)
+        self.assertIsNone(self.server.take_viewport_command())
+        with post({**body,'requestId':'expired'}): pass
+        self.server.viewport_command = (0,self.server.viewport_command[1])
+        self.assertIsNone(self.server.take_viewport_command())
+
     def test_state_sequence_and_retention(self):
         first = self.server.publish_model(b"first")
         for n in range(5):

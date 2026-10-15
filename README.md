@@ -8,6 +8,8 @@ View a Blender collection in the PICO Emulator with PBR materials, inspect its s
 
 **Prototype · Emulator-first · MIT**
 
+This feature branch adds an experimental [QR pairing, depth measurement and viewport link](docs/QR_ALIGNMENT.md). Build its add-on 0.4.0 and APK together. The 0.3.0 release below remains the emulator baseline; automatic world alignment and headset scanning are not yet validated.
+
 This public setup targets **PICO OS 6.1 Emulator**. The macOS Apple Silicon workflow has been exercised; Windows instructions and x86-64 APK packaging are provided, but Windows runtime testing is still needed. Physical headset deployment and monitor extraction are experimental and outside this guide.
 
 [Install & run](#install-and-run) · [Dependencies](#dependencies) · [Build from source](docs/DEVELOPMENT.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Protocol](PROTOCOL.md)
