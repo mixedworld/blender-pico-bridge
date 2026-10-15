@@ -52,7 +52,13 @@ Use the same computer for Blender and the emulator. This guide uses ADB reverse 
 
 ### 1. Obtain the bridge packages
 
-Until a public release is published, [build from source](docs/DEVELOPMENT.md). The release packaging command produces:
+Download the packages from [0.3.0 — Emulator preview](https://github.com/mixedworld/blender-pico-bridge/releases/tag/v0.3.0), or [build from source](docs/DEVELOPMENT.md):
+
+- [Blender add-on ZIP](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.3.0/pico_blender_bridge-0.3.0.zip)
+- [PICO Emulator viewer APK](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.3.0/blender-pico-bridge-debug.apk)
+- [SHA-256 checksums](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.3.0/SHA256SUMS)
+
+The release contains:
 
 ```text
 pico_blender_bridge-0.3.0.zip    Blender add-on

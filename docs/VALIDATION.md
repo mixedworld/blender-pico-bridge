@@ -21,7 +21,7 @@ Publication preparation checked on **15 October 2026**. This is an emulator-firs
 | Add-on packaging | Allowlisted source ZIP generated; two successive packages produce identical add-on bytes |
 | Publication scan | Git-index scan passed for private file categories, known local pairing token, local authoring paths and obvious private-key patterns; asset ZIP contents inspected too |
 | Documentation | Local file links checked; official standalone downloads and their launcher filenames verified from vendor ZIP inventories |
-| GitHub Actions | Workflow defined; remote execution has not run yet |
+| GitHub Actions | [Python and Android jobs passed](https://github.com/mixedworld/blender-pico-bridge/actions/runs/38754960203) on fresh Ubuntu runners: Python tests, source audit, Kotlin unit tests, debug APK build and package validation |
 
 Windows commands and standalone ZIPs are documented, and an x86-64 APK is packaged, but **Windows runtime and standalone launcher execution have not been tested here**. Physical hand-input comfort, camera tracking, sustained GPU performance and complete visual-design fidelity remain separate checks. The emulator does not establish headset performance.
 

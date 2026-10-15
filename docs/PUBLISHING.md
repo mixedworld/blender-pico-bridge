@@ -26,6 +26,6 @@ Suggested first release title: **0.3.0 — Emulator preview**. Release assets ar
 
 ## Publish when GitHub is connected
 
-Create the chosen repository under `mixedworld`, push the reviewed local `main` branch, and let CI run. Review successful CI and the source tree before publishing a tagged release with the verified assets. No workflow in this repository creates a remote, pushes changes, uploads models, or automatically publishes a release.
+Push the reviewed local `main` branch to `mixedworld/blender-pico-bridge` and let CI run. Review successful CI and the source tree before publishing a tagged release with the verified assets. No workflow in this repository creates a remote, pushes changes, uploads models, or automatically publishes a release.
 
-After the first public release exists, update README’s “Obtain the bridge packages” section to link to that real release. Do not add placeholder download links that look like existing releases. Enable private vulnerability reporting if available and add a maintainer contact to SECURITY.md.
+After each public release exists, update README’s “Obtain the bridge packages” section to link to that real release. Do not add placeholder download links that look like existing releases. Private vulnerability reporting is enabled; SECURITY.md links to the private reporting form.
