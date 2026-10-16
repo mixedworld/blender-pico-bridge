@@ -44,7 +44,10 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
     private var viewportJob: Job? = null
     private var pendingViewport: ViewportDelta? = null
     private var pendingCamera: TrackedViewportCamera? = null
-    private fun linkViewport(enabled: Boolean) {
+    private var resumeRoomViewportOnModel: String? = null
+    private var roomViewportRequested = false
+    private fun linkViewport(enabled: Boolean, preserveRoomIntent: Boolean = false) {
+        resumeRoomViewportOnModel = null
         val previous=viewportJob
         previous?.cancel();pendingViewport=null;pendingCamera=null
         val packet=_scene.value.packet
@@ -52,6 +55,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         val capability=if(headCamera) packet?.cameraSyncVersion==1 && packet.cameraControlEnabled && state.value.monitor.enabled && state.value.monitor.locked
             else packet?.viewportControlEnabled==true
         val allowed=enabled && capability
+        if (!preserveRoomIntent) roomViewportRequested = headCamera && allowed
         _state.update { it.copy(linkViewport=allowed,note=if(enabled && !allowed)
             (if(headCamera) "Enable Blender viewport control, then align and lock the monitor in Room." else "Enable Allow PICO viewport control in Blender first.") else it.note) }
         _scene.update { it.copy(linkViewport=allowed) }
@@ -64,11 +68,11 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             var sequence=0L
             try {
                 while(isActive) {
-                    delay(if(headCamera) 33 else 75)
+                    delay(if(headCamera) 11 else 75)
                     if(headCamera) {
                         val frame=pendingCamera
                         if(frame==null) {
-                            check(++missingFrames<60) { "Head tracking unavailable" }
+                            check(++missingFrames<182) { "Head tracking unavailable" }
                             continue
                         }
                         missingFrames=0
@@ -81,7 +85,9 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                     }
                 }
             } catch(cancelled: CancellationException) { throw cancelled }
-            catch(_: Exception) {
+            catch(error: Exception) {
+                println("BlenderBridge VIEWPORT_LINK_STOP ${error.javaClass.simpleName}")
+                if (headCamera && sourceHidden) sourceVisibility(false)
                 _state.update { it.copy(linkViewport=false,note="Viewport link stopped. Check Blender's control setting and reconnect.") }
                 _scene.update { it.copy(linkViewport=false) }
             } finally {
@@ -144,9 +150,13 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         _state.update { it.copy(monitor = next) }
         _scene.update { it.copy(monitor = next) }
     }
+    private var alignmentSaveId=0
+    private var lockedHandles: Pair<MonitorCalibration,MonitorHandleDraft>? = null
     private val handles=MonitorHandlesUseCase()
     private fun beginHandles() {
-        _scene.update { it.copy(monitorHandles=handles.from(state.value.monitor)) }
+        val calibration=state.value.monitor
+        val exact=lockedHandles?.takeIf { (m,_) -> m.copy(enabled=calibration.enabled,editing=calibration.editing,locked=calibration.locked)==calibration }?.second
+        _scene.update { it.copy(monitorHandles=exact ?: handles.from(calibration)) }
         _state.update { it.copy(handleError=null) }
     }
     private fun clearHandles() {
@@ -272,7 +282,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 if (event.visible) requestScan(ScanPurpose.PAIRING)
             }
             is BridgeUiEvent.RoomChanged -> {
-                if (!event.room) { closeMarkers();cancelTouch();clearHandles() }
+                if (!event.room) { closeMarkers();cancelTouch();clearHandles(); _scene.update { it.copy(alignmentSave=null) } }
                 linkViewport(false)
                 _state.update { it.copy(room = event.room, autoRoom = false, enteringRoom = false) }
                 if (!event.room && sourceHidden) sourceVisibility(false)
@@ -284,11 +294,25 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             BridgeUiEvent.SourceSize -> command(SceneCommand.SOURCE_SIZE)
             BridgeUiEvent.AlignMonitor -> if (state.value.room) {
                 linkViewport(false);closeMarkers();cancelTouch();if(sourceHidden) sourceVisibility(false)
-                monitor { it.copy(enabled=true,editing=true,locked=false) };beginHandles()
+                _scene.update { it.copy(alignmentSave=null) };monitor { it.copy(enabled=true,editing=true,locked=false) };beginHandles()
                 _state.update { it.copy(collapsed=false,connectionPanel=false,note="Place cyan handles on Blender’s 3D viewport corners, not the monitor corners; adjust the amber handle for curve.") }
             }
             is BridgeUiEvent.MonitorHandleMoved -> moveHandle(event)
-            BridgeUiEvent.LockMonitor -> if(state.value.handleError==null) { closeMarkers();cancelTouch();clearHandles(); monitor { it.copy(editing = false, locked = true) }; _state.update { it.copy(note = "Alignment locked. Grab the staged model through the monitor.") } }
+            BridgeUiEvent.LockMonitor -> if(state.value.room && state.value.handleError==null) {
+                val draft=_scene.value.monitorHandles ?: handles.from(state.value.monitor)
+                closeMarkers();cancelTouch();clearHandles();monitor { it.copy(editing=false,locked=true) }
+                lockedHandles=state.value.monitor to draft
+                _scene.update { it.copy(alignmentSave=AlignmentSaveRequest(++alignmentSaveId,state.value.monitor,draft)) }
+                _state.update { it.copy(note="Alignment locked · saving the frame and curvature in this room…") }
+            }
+            BridgeUiEvent.AlignmentLocating -> if(state.value.room && !state.value.monitor.editing) {
+                linkViewport(false);if(sourceHidden) sourceVisibility(false)
+                monitor { it.copy(enabled=false,locked=false) }
+            }
+            is BridgeUiEvent.AlignmentRestored -> if(state.value.room && !state.value.monitor.editing) {
+                lockedHandles=event.monitor to event.handles
+                monitor { event.monitor }
+            }
             BridgeUiEvent.LeaveMonitor -> { closeMarkers(); cancelTouch();clearHandles(); monitor { it.copy(editing = false, enabled = it.locked) } }
             BridgeUiEvent.StageTake -> if(state.value.handleError==null) { sourceVisibility(false); command(SceneCommand.STAGE_TAKE) }
             BridgeUiEvent.ResetTake -> if (state.value.monitor.locked) { sourceVisibility(false); command(SceneCommand.RESET_TAKE) } else _state.update { it.copy(note = "Align and lock the monitor first.") }
@@ -316,9 +340,15 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 loadedRevision = event.revision
                 _state.update { it.copy(phase = "live", hasModel = true, status = "Live from Blender", fitScale = event.fitScale,
                     note = inspectionHint(it.mode)) }
+                if (resumeRoomViewportOnModel == event.revision && _scene.value.packet?.revision == event.revision)
+                    linkViewport(true)
             }
             is BridgeUiEvent.FitChanged -> _state.update { it.copy(fitScale = event.scale) }
-            is BridgeUiEvent.SceneError -> _state.update { it.copy(phase = if (it.hasModel) "stale" else "error", status = event.message, note = event.message) }
+            is BridgeUiEvent.SceneError -> {
+                resumeRoomViewportOnModel = null
+                roomViewportRequested = false
+                _state.update { it.copy(phase = if (it.hasModel) "stale" else "error", status = event.message, note = event.message) }
+            }
             is BridgeUiEvent.InspectionChanged -> _state.update { it.copy(scale = event.scale, note = event.note ?: it.note) }
             is BridgeUiEvent.ModeChanged -> {
                 _state.update { it.copy(mode = event.mode, note = inspectionHint(event.mode)) }
@@ -348,9 +378,15 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                     is BridgeUpdate.Status -> _state.update { it.copy(phase = if (refreshing && it.hasModel && update.phase in setOf("connecting", "receiving")) "refreshing" else if (it.hasModel && update.phase == "connecting") "reconnecting" else update.phase, status = update.message,
                         note = if (it.hasModel && update.phase in setOf("stale", "error")) "Last complete model retained. Refresh to reconnect." else it.note) }
                     is BridgeUpdate.Model -> {
-                        linkViewport(false)
+                        // The old-revision camera POST may fail before the state poll sees this model.
+                        val resumeRoomLink = state.value.room && (roomViewportRequested || state.value.linkViewport || resumeRoomViewportOnModel != null)
+                        linkViewport(false, preserveRoomIntent = true)
                         _scene.update { it.copy(file = update.file, packet = update.packet) }
                         _state.update { it.copy(partCount = update.packet.explodeParts.size) }
+                        if (resumeRoomLink) {
+                            resumeRoomViewportOnModel = update.packet.revision
+                            if (loadedRevision == update.packet.revision) linkViewport(true)
+                        }
                     }
                     is BridgeUpdate.Frame -> {
                         if (state.value.markerPhase!=MarkerPhase.NONE && markerBoard!=null && update.packet.board!=markerBoard) {

@@ -12,6 +12,9 @@ import java.net.URI
 import java.security.MessageDigest
 
 class HttpBridgeRepository(context: Context) : BridgeRepository {
+    private var cameraSamples = 0
+    private var cameraTotalNanos = 0L
+    private var cameraMaxNanos = 0L
     private val prefs = context.getSharedPreferences("pairing", Context.MODE_PRIVATE)
     private val directory = File(context.cacheDir, "bridge-models").apply { mkdirs() }
     override fun savedPairing() = Pairing(prefs.getString("endpoint", "") ?: "", prefs.getString("token", "") ?: "")
@@ -123,6 +126,7 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
     }
 
     override suspend fun viewCamera(pairing: Pairing,session: String,revision: String,stream: String,sequence: Long,camera: TrackedViewportCamera?): Unit = withContext(Dispatchers.IO) {
+        val started = System.nanoTime()
         val body=JSONObject().put("session",session).put("revision",revision).put("stream",stream).put("sequence",sequence).put("active",camera!=null)
         camera?.let { body.put("position",JSONArray(it.position)).put("rotation",JSONArray(it.rotation))
             .put("slopes",JSONArray(it.slopes)).put("near",it.near).put("far",it.far) }
@@ -132,8 +136,23 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
             connection.instanceFollowRedirects=false
             connection.setRequestProperty("Authorization","Bearer ${pairing.token}")
             connection.setRequestProperty("Content-Type","application/json")
-            connection.outputStream.use { it.write(body.toString().toByteArray()) }
+            val payload = body.toString().toByteArray()
+            connection.setFixedLengthStreamingMode(payload.size)
+            connection.outputStream.use { it.write(payload) }
             check(connection.responseCode in listOf(200,202)) { "Tracked camera unavailable" }
+            // Consume the bounded reply so Android can reuse this TCP connection.
+            connection.inputStream.use { input ->
+                var count = 0
+                while (input.read() != -1) check(++count <= 256) { "Oversized camera acknowledgment" }
+            }
+            if (camera != null) {
+                val elapsed = System.nanoTime()-started
+                cameraSamples++;cameraTotalNanos+=elapsed;cameraMaxNanos=maxOf(cameraMaxNanos,elapsed)
+                if (cameraSamples==300) {
+                    println("BlenderBridge CAMERA_TRANSPORT samples=$cameraSamples meanMs=${cameraTotalNanos/cameraSamples/1e6} maxMs=${cameraMaxNanos/1e6}")
+                    cameraSamples=0;cameraTotalNanos=0;cameraMaxNanos=0
+                }
+            }
         } finally { connection.disconnect() }
     }
 

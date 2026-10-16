@@ -19,6 +19,7 @@ from .glb import with_explosion_parts
 from .pairing import pairing_payload
 from .display import PairingDisplay
 from .tracked_camera import TrackedCamera
+from .source_visibility import hide_source_objects
 
 _server = None
 _exporting = False
@@ -47,7 +48,7 @@ def scoped_objects():
     elif cfg.scope == "SELECTION":
         objects = [bpy.data.objects[n] for n in _scope if n in bpy.data.objects]
     else:
-        objects = [o for o in bpy.context.scene.objects if (not o.hide_get() or o.name in _source_visibility) and not o.hide_render]
+        objects = [o for o in bpy.context.view_layer.objects if (not o.hide_get() or o.name in _source_visibility) and not o.hide_render]
     allowed = {o for o in objects if o.type not in {"CAMERA", "LIGHT"}}
     # Include skinning dependencies and transform ancestors, without adding unrelated geometry.
     for obj in list(allowed):
@@ -169,25 +170,19 @@ def restore_source_visibility():
 def update_source_visibility(hidden):
     if hidden:
         if not _source_visibility:
-            for obj in scoped_objects():
-                if obj.type in {"MESH", "CURVE", "FONT", "SURFACE", "META"}:
-                    _source_visibility[obj.name] = (obj.hide_get(), bpy.context.view_layer)
-                    obj.hide_set(True)
+            hide_source_objects(scoped_objects(), bpy.context.view_layer, _source_visibility)
     elif _source_visibility:
         restore_source_visibility()
 
 
-def tick():
-    global _last_frame, _message, _dirty_at
+def camera_tick():
+    """Apply only the latest head pose; do not wait for scene-state/export work."""
+    global _message
     if not _server:
         return None
-    update_source_visibility(_server.source_hidden())
     scene = bpy.context.scene
     cfg = scene.pico_bridge
     area, region = _display.target() if _display else (None, None)
-    if _display:
-        _display.update(time.monotonic() - _server.last_client < 3)
-    viewport = area.spaces.active.region_3d if area else None
     camera_command = _server.take_camera_command()
     if _tracked_camera.active and (not cfg.allow_viewport_control or not _server.camera_lease_active()):
         _tracked_camera.stop()
@@ -201,6 +196,20 @@ def tick():
                 _message='Camera sync stopped. Reopen the viewport and align again.'
         elif not camera_command['active']:
             _tracked_camera.stop()
+    return 0.008 if _tracked_camera.active else 0.025
+
+
+def tick():
+    global _last_frame, _message, _dirty_at
+    if not _server:
+        return None
+    update_source_visibility(_server.source_hidden())
+    scene = bpy.context.scene
+    cfg = scene.pico_bridge
+    area, region = _display.target() if _display else (None, None)
+    if _display:
+        _display.update(time.monotonic() - _server.last_client < 3)
+    viewport = area.spaces.active.region_3d if area else None
     command = _server.take_viewport_command()
     if command and cfg.allow_viewport_control and viewport and region and viewport.view_perspective != 'CAMERA':
         from mathutils import Quaternion, Vector
@@ -301,6 +310,7 @@ def start_bridge():
         area = next((a for w in bpy.context.window_manager.windows for a in w.screen.areas if a.type == 'VIEW_3D'), None)
     _display = PairingDisplay(pairing_payload(pairing_endpoint(), cfg.token, _server.session), area)
     bpy.app.timers.register(tick, first_interval=0.05)
+    bpy.app.timers.register(camera_tick, first_interval=0.008)
     _message = "Listening"
     try:
         export_model()
@@ -321,6 +331,8 @@ def stop_bridge():
         _display = None
     if bpy.app.timers.is_registered(tick):
         bpy.app.timers.unregister(tick)
+    if bpy.app.timers.is_registered(camera_tick):
+        bpy.app.timers.unregister(camera_tick)
     _message = "Stopped"
 
 

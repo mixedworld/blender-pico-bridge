@@ -72,7 +72,7 @@ Bridge 0.3 adds `POST /v1/source-visibility` with exactly `{ "hidden": true|fals
 using the same bearer authorization. The body limit is 64 bytes; unknown fields,
 non-booleans and other command paths are rejected. HTTP threads only store intent.
 The Blender main-thread timer applies viewport `hide_set` to source meshes and
-records previous flags; exported model bytes and pose node membership remain intact.
+records previous flags in the active view layer; objects excluded from that layer are skipped. Unavailable-object errors do not stop camera updates or lease expiry. Exported model bytes and pose node membership remain intact.
 A hidden lease expires after eight seconds unless renewed. The native client renews
 every 2.5 seconds while fully extracted and the optional Room setting is enabled.
 Reset, disabling, leaving Room and disconnect request restoration. Source visibility
@@ -112,5 +112,7 @@ State advertises `cameraSyncVersion:1`, `cameraControlEnabled` (Blender opt-in a
 Position and quaternion are the camera-to-model pose in exported glTF Y-up coordinates; camera-local +Y is up and -Z is forward. Slopes are `[left,right,bottom,top]` at unit forward depth. Near/far are positive exported-model units. Room derives them from the HMD position, monitor frame and inverse fitted-model transform. With source hiding enabled, near is the eye-to-monitor distance in those units. No camera images, VST calibration or raw room data are sent.
 
 Session/stream IDs are 1–64 characters. Sequences are nonnegative integers ≤2^53. Numbers must be finite with magnitude ≤10^6, rotation squared length in [0.99,1.01], slope spans in (0.0001,20), individual slope magnitude <20, and 0.00001 ≤ near < far ≤10^6. Unknown fields are rejected. A release contains only `session,revision,stream,sequence,active:false`.
+
+A changed model revision clears the old camera-stream lease, allowing immediate rebinding; an identical export retains it. Successful HTTP responses support persistent connections with bounded acknowledgments; error responses close the connection.
 
 The latest command replaces pending intent (202), monotonic sequences ignore older samples without extending their lease (200), and another live stream is rejected (409). A matching current session, model revision and explicit opt-in are required (409 otherwise). Pending commands expire after 0.5 seconds; the active stream lease expires after one second. HTTP threads never touch bpy. The main-thread timer creates/removes only its own viewport-local camera and restores previous view/render settings. Source objects and the production scene camera remain unchanged. This is a monoscopic physical-screen frustum, not a per-eye optical FOV clone or frame-lock contract. Curved displays currently use a chord approximation; see the linked usage/limits document.

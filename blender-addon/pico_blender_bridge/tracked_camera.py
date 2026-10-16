@@ -66,9 +66,12 @@ class TrackedCamera:
         data.shift_x = (right+left)/(2*(right-left))
         data.shift_y = (top+bottom)/(2*(right-left))
         data.clip_start, data.clip_end = command['near'], command['far']
-        scene.render.resolution_x, scene.render.resolution_y = region.width, region.height
-        scene.render.resolution_percentage = 100
-        scene.render.pixel_aspect_x = scene.render.pixel_aspect_y = 1.0
+        render = scene.render
+        if (render.resolution_x, render.resolution_y, render.resolution_percentage,
+                render.pixel_aspect_x, render.pixel_aspect_y) != (region.width, region.height, 100, 1.0, 1.0):
+            render.resolution_x, render.resolution_y = region.width, region.height
+            render.resolution_percentage = 100
+            render.pixel_aspect_x = render.pixel_aspect_y = 1.0
         area.tag_redraw()
 
     def stop(self):
