@@ -16,6 +16,14 @@ calibration = importlib.import_module('bridge_pairing_test.calibration')
 
 
 class PairingTest(unittest.TestCase):
+    def test_center_only_rendering_keeps_layout_and_qr_pairing_compatible(self):
+        board=calibration.board_layout(2849,1260)
+        self.assertEqual([m['id'] for m in calibration.visible_markers(board,True,False)],list(range(5)))
+        self.assertEqual([m['id'] for m in calibration.visible_markers(board,True,False,True)],[4])
+        self.assertEqual([m['id'] for m in calibration.visible_markers(board,True,True,True)],list(range(4)))
+        self.assertEqual(calibration.visible_markers(board,False,False,True),[])
+        self.assertEqual(len(board['markers']),4)
+
     def test_versioned_payload_keeps_special_characters(self):
         payload = pairing.pairing_payload('http://192.168.1.3:8766', 'a+/=&_?b', 'fixture-session')
         parsed = urllib.parse.urlsplit(payload)
@@ -69,3 +77,12 @@ class PairingTest(unittest.TestCase):
             self.assertLessEqual(x+w+quiet,2849-400-24)
             self.assertLessEqual(y+h+quiet,1260-80-24)
         self.assertIsNone(calibration.board_layout(300,300,(0,0,200,0)))
+
+    def test_optional_center_reference_preserves_four_corner_protocol(self):
+        board = calibration.board_layout(1920,1080)
+        ref = board['referenceMarker']
+        self.assertEqual(ref['id'],4)
+        self.assertEqual(len(board['markers']),4)
+        self.assertEqual(ref['rect'][2],board['markers'][0]['rect'][2])
+        self.assertEqual(len(calibration.MARKERS),5)
+        self.assertEqual(len(set(calibration.MARKERS)),5)

@@ -6,7 +6,7 @@ import bpy.utils.previews
 import gpu
 from gpu_extras.batch import batch_for_shader
 from .pairing import qr_matrix, matrix_png
-from .calibration import MARKERS, board_layout
+from .calibration import MARKERS, board_layout, visible_markers
 
 
 class PairingDisplay:
@@ -14,6 +14,7 @@ class PairingDisplay:
         self.area_id = area.as_pointer() if area and area.type == 'VIEW_3D' else None
         self.overlay = False
         self.show_qr = False
+        self.center_only = False
         self.board = None
         self.connected = False
         self.previews = bpy.utils.previews.new()
@@ -99,7 +100,7 @@ class PairingDisplay:
             board = self.layout(area, region)
             if not board:
                 return
-            for marker in board['markers'] if self.overlay else []:
+            for marker in visible_markers(board, self.overlay, self.show_qr, self.center_only):
                 x,y,size,_ = marker['rect']
                 values = [[p == '1' for p in row] for row in MARKERS[marker['id']]]
                 matrix(values, x, y, size, 1)

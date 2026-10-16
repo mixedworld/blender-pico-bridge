@@ -29,14 +29,19 @@ fun BridgeScene(feed: StateFlowHolder, modifier: Modifier, event: (BridgeUiEvent
     DisposableEffect(hmd) { hmd?.start(); onDispose { hmd?.stop() } }
     LaunchedEffect(hmd) {
         hmd?.dataFlow?.collect { value ->
-            if (hmd.state == DataProvider.State.STARTED && attached) runtime.placeForViewer(value.hmdPose.position, value.hmdPose.rotation)
+            if (hmd.state == DataProvider.State.STARTED && attached) {
+                runtime.placeForViewer(value.hmdPose.position,value.hmdPose.rotation)
+                runtime.trackView(value.hmdPose.position)
+            }
         }
     }
     val touch by remember(feed) { feed.flow.map { it.touchAlignment }.distinctUntilChanged() }.collectAsState(initial=null)
     TouchTrackingEffect(touch,room,attached,runtime,feed,event)
+    val editing by remember(feed) { feed.flow.map { it.monitor.editing }.distinctUntilChanged() }.collectAsState(initial=false)
     val context = LocalContext.current
     DisposableEffect(runtime) { onDispose { runtime.close() } }
-    SpatialView(modifier = modifier.pointerInput(runtime) {
+    // The same recognizer targets individual alignment guides or the inspection model.
+    SpatialView(modifier = modifier.pointerInput(runtime,editing) {
         detectSpatialTransformGesture(context, targetedToEntity = TargetEntity.any { feed.flow.value.debugReveal == null && feed.flow.value.touchAlignment == null && runtime.accepts(it) }, onTransform = runtime::manipulate)
     }, initial = { content, attachments ->
         runtime.attach(content)
@@ -59,6 +64,7 @@ fun BridgeScene(feed: StateFlowHolder, modifier: Modifier, event: (BridgeUiEvent
                 }
                 runtime.resetIfChanged(feed.flow.value.reset)
                 runtime.preferences(feed.flow.value)
+                value.worldMonitor?.let { event(BridgeUiEvent.WorldMonitorApplied(it,runtime.monitorFromWorld(it))) }
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) { android.util.Log.e("BlenderBridge", "SCENE_ERROR", error); event(BridgeUiEvent.SceneError(error.message ?: "Model could not be loaded")) }
         }

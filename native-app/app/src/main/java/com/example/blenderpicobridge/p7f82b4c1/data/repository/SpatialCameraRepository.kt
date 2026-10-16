@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.SharedMemory
+import android.os.SystemClock
 import android.util.Log
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.*
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.*
@@ -25,11 +26,13 @@ import org.opencv.objdetect.*
 import java.nio.ByteOrder
 
 /** Camera frames remain in app memory; no image upload, disk cache or diagnostic permission bypass. */
-class SpatialCameraRepository(private val context: Context) {
-    fun scan(purpose: ScanPurpose, board: CalibrationBoard?): Flow<ScanUpdate> = flow {
+class SpatialCameraRepository(private val context: Context, private val diagnostics: Boolean = false, private val automaticWorld: Boolean = true) : CameraRepository {
+    override fun scan(purpose: ScanPurpose, board: CalibrationBoard?, settings: StateFlow<MarkerSettings>?): Flow<ScanUpdate> = flow {
         check(context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) { "Camera permission denied. Use manual connection." }
         if (purpose == ScanPurpose.DEPTH) {
             check(context.checkSelfPermission("com.picovr.permission.SPATIAL_DATA") == PackageManager.PERMISSION_GRANTED) { "Spatial-data permission is required for screen depth." }
+        }
+        if (purpose != ScanPurpose.PAIRING) {
             requireNotNull(board) { "Show QR and markers in Blender before measuring." }
             check(OpenCVLoader.initLocal()) { "Marker detection unavailable. Use manual alignment." }
         }
@@ -40,16 +43,24 @@ class SpatialCameraRepository(private val context: Context) {
         withTimeout(8000) { while (!instance.ready) delay(100) }
         Log.i("BridgeCamera", "service ready")
         emit(ScanUpdate.Status("Starting camera capture…"))
-        // Device intrinsics confirm square pixels at 4:3 (fx == fy). A 16:9 request
-        // stretches the camera image and prevents QR finder-pattern detection.
+        // QR scanning was verified at this 4:3 capture size. Use the capture
+        // matrix unless a measured, device-scoped marker profile passes validation.
         val width = 1280; val height = 960
         val session = requireNotNull(instance.createSession(SpatialMLSession.InitInfo(
             imageWidth=width, imageHeight=height, containerWidth=0, containerHeight=0, containerDepth=0,
             containerType=SpatialMLSession.ContainerType.DISABLED))) { "PICO camera session unavailable" }
         val tensors = mutableListOf<GlobalTensor>()
         val pipelines = mutableListOf<Pipeline>()
+        val head=if(purpose==ScanPurpose.MARKER_POSE && automaticWorld) StationaryHeadRepository() else null
         fun tensor(info: Tensor.InitInfo) = session.newGlobalTensor(info).also(tensors::add)
         try {
+            head?.start()
+            val worldSolver=HeadCameraCalibrationRepository()
+            val worldSamples=mutableListOf<HeadMarkerSample>()
+            var worldAlignment: WorldMarkerAlignment?=null
+            var previousCapture: ByteArray?=null
+            var worldK: FloatArray?=null
+            var lastWorldAttempt=0
             val imageInfo = Tensor.MultiDimensionalInitInfo(Tensor.DataType.Image.R8G8B8_U, intArrayOf(height,width))
             val left = tensor(imageInfo); val right = tensor(imageInfo)
             val timestamp = tensor(Tensor.TimeStampInitInfo())
@@ -69,16 +80,24 @@ class SpatialCameraRepository(private val context: Context) {
                 projection.uvTo3DInCameraSpace(refs[0],refs[1],refs[2],refs[3],refs[4],refs[5])
             }
             val reader = QRCodeReader()
-            val detector = if (purpose == ScanPurpose.DEPTH) ArucoDetector(Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50)) else null
+            val detector = if (purpose != ScanPurpose.PAIRING) ArucoDetector(Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50)) else null
             var stability = StabilizeScreenSizeUseCase()
+            val markerStability=StabilizeMarkerEstimateUseCase()
+            val markerPose=KnownMarkerPoseRepository()
+            var lastSettings: MarkerSettings?=null
+            val cameraProfile=MarkerCameraProfileRepository(context).load()
+            var cameraK=FloatArray(9)
+            var curveHint: KnownMarkerPoseRepository.Fit?=null
+            var diagnosticCount=0
             var lastMarkers: Set<Int>? = null
             var frames = 0
             var previousHash: Int? = null
             Log.i("BridgeCamera", "pipeline configured ${width}x$height")
-            withTimeout(45000) {
+            withTimeout(if (purpose==ScanPurpose.MARKER_POSE) 180000L else 45000L) {
                 while (currentCoroutineContext().isActive) {
                     // Serialize capture, CPU detection and depth: never overwrite same-frame tensors.
                     if (frames == 0) emit(ScanUpdate.Status("Waiting for first camera frame…"))
+                    val captureStarted=SystemClock.elapsedRealtime()
                     val captureTask = capture.submit(captureBindings,null,null)
                     val rgb = withTimeout(5000) { left.readbackContentSuspend() }.use { content ->
                         val buffer = content.buffer.duplicate().apply { rewind() }
@@ -86,11 +105,13 @@ class SpatialCameraRepository(private val context: Context) {
                         ByteArray(buffer.remaining()).also { buffer.get(it) }
                     }
                     frames++
-                    if (frames == 1) {
+                    if (frames == 1 || purpose==ScanPurpose.MARKER_POSE) {
                         intrinsics.readbackContentSuspend().use { content ->
                             val bytes = content.buffer.duplicate().order(ByteOrder.nativeOrder()).apply { rewind() }
-                            val values = FloatArray(9).also { bytes.asFloatBuffer().get(it) }
-                            Log.i("BridgeCamera", "intrinsics fx=${values[0]} fy=${values[4]}")
+                            val sdkK = FloatArray(9).also { bytes.asFloatBuffer().get(it) }
+                            cameraK=if(purpose==ScanPurpose.MARKER_POSE) SelectMarkerIntrinsicsUseCase()(sdkK,width,height,cameraProfile) else sdkK
+                            if(frames==1) Log.i("BridgeCamera","cameraModel=${if(cameraK.contentEquals(sdkK)) "sdk" else "measured-local-profile"}")
+                            if (frames==1) Log.i("BridgeCamera", "intrinsics fx=${cameraK[0]} fy=${cameraK[4]}")
                         }
                     }
                     if (frames == 1 || frames % 10 == 0) {
@@ -115,6 +136,71 @@ class SpatialCameraRepository(private val context: Context) {
                             Log.i("BridgeCamera", "QR decoded validPairing=${pairing != null}")
                             if (pairing != null) { emit(ScanUpdate.Paired(pairing)); return@withTimeout }
                         }
+                    } else if (purpose==ScanPurpose.MARKER_POSE) {
+                        val config=settings?.value ?: MarkerSettings()
+                        if (config!=lastSettings) { markerStability.reset();curveHint=null;lastSettings=config;worldSamples.clear();worldAlignment=null;lastWorldAttempt=0 }
+                        if(worldK?.contentEquals(cameraK)==false) { worldSamples.clear();worldAlignment=null;lastWorldAttempt=0 }
+                        worldK=cameraK.copyOf()
+                        val observed=markerPolygons(rgb,width,height,detector!!)
+                        val fit=markerPose.fit(observed,board!!,config,cameraK)
+                        if (frames%10==0 && observed.size>=3 && (fit?.estimate?.errorPx ?: Float.POSITIVE_INFINITY)>3f) {
+                            curveHint=markerPose.suggestCurve(observed,board,config,cameraK)
+                            Log.i("BridgeMarker","curveHint=${curveHint?.estimate?.curveDegrees} hintErrorPx=${curveHint?.estimate?.errorPx}")
+                        }
+                        val hint=curveHint?.estimate?.takeIf { it.errorPx<=3f && it.errorPx+1f<(fit?.estimate?.errorPx ?: Float.POSITIVE_INFINITY) }
+                        if (diagnostics && frames%20==0 && observed.size>=4 && diagnosticCount++<3) {
+                            Log.i("BridgeMarkerProbe","LEFT "+markerPose.diagnose(observed,board,config,cameraK))
+                            val rightRgb=right.readbackContentSuspend().use { content ->
+                                val buffer=content.buffer.duplicate().apply { rewind() }
+                                ByteArray(buffer.remaining()).also { buffer.get(it) }
+                            }
+                            val rightObserved=markerPolygons(rightRgb,width,height,detector)
+                            if(rightObserved.size>=4) Log.i("BridgeMarkerProbe","RIGHT "+markerPose.diagnose(rightObserved,board,config,cameraK))
+                        }
+                        val ready=markerStability.add(fit?.estimate)
+                        var worldStatus="Hold your head still for a second, then turn or tilt to another angle"
+                        if(head!=null) {
+                            val stamp=timestamp.readbackContentSuspend().use { value ->
+                                val bytes=value.buffer.duplicate().apply { rewind() }
+                                ByteArray(bytes.remaining()).also { bytes.get(it) }
+                            }
+                            val fresh=previousCapture?.let { !it.contentEquals(stamp) } ?: false
+                            previousCapture=stamp
+                            val headPose=head.steady(captureStarted,SystemClock.elapsedRealtime())
+                            if(frames%20==0) Log.i("BridgeWorld","capture ${head.diagnostic} steady=${headPose!=null} fresh=$fresh frameMs=${SystemClock.elapsedRealtime()-captureStarted} views=${worldSamples.size}")
+                            if(head.frames==0) worldStatus="Waiting for head tracking · scan in Room mode"
+                            if(ready && fit!=null && fit.estimate.markerCount>=3 && fresh && headPose!=null && worldAlignment==null) {
+                                val distinct=worldSamples.all { it.globalFromHead.angle(headPose)>Math.toRadians(3.0) || it.globalFromHead.distance(headPose)>.035 }
+                                if(distinct && worldSamples.size<40) {
+                                    worldSamples+=HeadMarkerSample(headPose,RigidPose(fit.cameraPose.rotation.map(Float::toDouble),fit.cameraPose.translation.map(Float::toDouble)))
+                                    if(worldSamples.size!=lastWorldAttempt) {
+                                        lastWorldAttempt=worldSamples.size
+                                        worldAlignment=worldSolver.solve(worldSamples)?.alignment
+                                        Log.i("BridgeWorld","samples=${worldSamples.size} solved=${worldAlignment!=null} positionRms=${worldAlignment?.positionRms} angleRms=${worldAlignment?.angleRms}")
+                                    }
+                                }
+                                worldStatus=worldSolver.status
+                            } else if(fit!=null && fit.estimate.markerCount<3) worldStatus="Keep at least three separated markers in view"
+                            if(worldAlignment!=null) worldStatus=worldSolver.status
+                        }
+                        val status=when {
+                            !config.confirmed -> "Set the measured black-square side before estimating scale."
+                            observed.isEmpty() -> "Searching for Blender markers · keep the center marker visible"
+                            fit==null -> markerPose.rejection ?: "Marker fit rejected"
+                            fit.estimate.errorPx>3f -> "Fit error %.1f px".format(fit.estimate.errorPx)+(hint?.let { " · try %.0f° curve (%.1f px)".format(it.curveDegrees,it.errorPx) } ?: " · no reliable board pose yet")
+                            head!=null && ready -> worldStatus
+                            ready -> "Estimate ready · pause to review size and curve"
+                            else -> "Hold steady · ${markerStability.acceptedSamples}/8 matching estimates"
+                        }
+                        // Exact 4:1 resize; outlines remain in original 1280×960 image coordinates.
+                        val preview=ByteArray(320*240*3)
+                        for (y in 0 until 240) for (x in 0 until 320) {
+                            val src=((y*4)*width+x*4)*3;val dst=(y*320+x)*3
+                            for (c in 0..2) preview[dst+c]=rgb[src+c]
+                        }
+                        emit(ScanUpdate.Markers(MarkerScanFrame(config,preview,observed,fit?.projected ?: emptyList(),
+                            fit?.outline ?: emptyList(),fit?.estimate,markerStability.acceptedSamples,status,worldRequired=head!=null,worldAlignment=worldAlignment)))
+                        if (frames%10==0) Log.i("BridgeMarker","frame=$frames count=${observed.size} stable=${markerStability.acceptedSamples} errorPx=${fit?.estimate?.errorPx} distance=${fit?.estimate?.distance} rejected=${markerPose.rejection} sideMm=${config.sideMm} curve=${config.curveDegrees}")
                     } else {
                         val (centers, found) = markerCenters(rgb,width,height,detector!!)
                         if (found != lastMarkers) {
@@ -159,12 +245,27 @@ class SpatialCameraRepository(private val context: Context) {
             throw error
         } finally {
             Log.i("BridgeCamera", "releasing camera session")
+            withContext(NonCancellable) { head?.stop() }
             // Clear the public PhantomReference before explicit destruction to avoid a second GC cleanup.
             pipelines.asReversed().forEach { it.destructor.clear(); it.destructor.destroy() }
             tensors.asReversed().forEach { it.destructor.clear(); it.destructor.destroy() }
             session.destructor.clear(); session.destructor.destroy()
         }
     }.flowOn(Dispatchers.IO)
+
+    private fun markerPolygons(rgb: ByteArray,width: Int,height: Int,detector: ArucoDetector): List<MarkerPolygon> {
+        val image=Mat(height,width,CvType.CV_8UC3);val gray=Mat();val ids=Mat();val corners=mutableListOf<Mat>()
+        return try {
+            image.put(0,0,rgb);Imgproc.cvtColor(image,gray,Imgproc.COLOR_RGB2GRAY)
+            detector.detectMarkers(gray,corners,ids)
+            (0 until ids.rows()).mapNotNull { i ->
+                val id=ids.get(i,0)[0].toInt()
+                if (id !in 0..4) null else MarkerPolygon(id,(0..3).map { c ->
+                    val p=corners[i].get(0,c);ImagePoint(p[0].toFloat(),p[1].toFloat())
+                })
+            }
+        } finally { image.release();gray.release();ids.release();corners.forEach { it.release() } }
+    }
 
     private fun markerCenters(rgb: ByteArray, width: Int, height: Int, detector: ArucoDetector): Pair<IntArray?,Set<Int>> {
         val image = Mat(height,width,CvType.CV_8UC3); val gray = Mat(); val ids = Mat(); val corners = mutableListOf<Mat>()

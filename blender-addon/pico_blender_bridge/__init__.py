@@ -18,6 +18,7 @@ from .server import BridgeServer
 from .glb import with_explosion_parts
 from .pairing import pairing_payload
 from .display import PairingDisplay
+from .tracked_camera import TrackedCamera
 
 _server = None
 _exporting = False
@@ -32,6 +33,7 @@ _export_signature = None
 _message = "Stopped"
 _display = None
 _auto_start_attempted = False
+_tracked_camera = TrackedCamera()
 
 
 def settings():
@@ -186,6 +188,19 @@ def tick():
     if _display:
         _display.update(time.monotonic() - _server.last_client < 3)
     viewport = area.spaces.active.region_3d if area else None
+    camera_command = _server.take_camera_command()
+    if _tracked_camera.active and (not cfg.allow_viewport_control or not _server.camera_lease_active()):
+        _tracked_camera.stop()
+    if camera_command:
+        if camera_command['active'] and cfg.allow_viewport_control and _server.camera_lease_active() and area and region:
+            try:
+                _tracked_camera.apply(camera_command,scene,area,region)
+            except (ValueError,ReferenceError,RuntimeError):
+                _tracked_camera.stop()
+                cfg.allow_viewport_control=False
+                _message='Camera sync stopped. Reopen the viewport and align again.'
+        elif not camera_command['active']:
+            _tracked_camera.stop()
     command = _server.take_viewport_command()
     if command and cfg.allow_viewport_control and viewport and region and viewport.view_perspective != 'CAMERA':
         from mathutils import Quaternion, Vector
@@ -236,6 +251,8 @@ def tick():
                            "timeSeconds": (scene.frame_current - _clip_start) / _clip_fps,
                            "transforms": transforms, "viewQuaternion": view_rotation, "sourceHidden": bool(_source_visibility),
                            "viewport": view_state, "viewportControlEnabled": bool(cfg.allow_viewport_control and viewport and viewport.view_perspective != 'CAMERA'),
+                           "cameraSyncVersion": 1, "cameraControlEnabled": bool(cfg.allow_viewport_control and viewport),
+                           "cameraSyncActive": _tracked_camera.active,
                            "calibrationBoard": _display.board if _display else None,
                            "sentAtUnixMs": time.time_ns() // 1000000})
     if cfg.auto_export and _dirty_at and not _source_visibility and not playing and time.monotonic() - _dirty_at > 0.75:
@@ -258,7 +275,9 @@ def changed(scene, depsgraph):
         return
     if any(update.is_updated_geometry or isinstance(update.id, (bpy.types.Material, bpy.types.Image))
            or (isinstance(update.id, bpy.types.Object) and not update.id.animation_data)
-           for update in depsgraph.updates):
+           for update in depsgraph.updates
+           if not (isinstance(update.id, bpy.types.Object) and update.id.type == "CAMERA")
+           and not isinstance(update.id, bpy.types.Camera)):
         _dirty_at = time.monotonic()
 
 
@@ -293,6 +312,7 @@ def start_bridge():
 def stop_bridge():
     global _server, _message, _display
     restore_source_visibility()
+    _tracked_camera.stop()
     current, _server = _server, None
     if current:
         current.close()
@@ -329,7 +349,7 @@ class PicoBridgeSettings(bpy.types.PropertyGroup):
     auto_export: bpy.props.BoolProperty(name="Sync model edits", default=True)
     auto_start: bpy.props.BoolProperty(name="Start when panel opens", default=True)
     allow_viewport_control: bpy.props.BoolProperty(name="Allow PICO viewport control", default=False,
-        description="Paired gestures adjust the viewport, never objects or the scene camera")
+        description="Allow a temporary head-tracked PICO camera in Room, or viewport orbit in Preview. Source objects and scene camera stay unchanged")
     last_revision: bpy.props.StringProperty()
 
 
@@ -399,6 +419,21 @@ class PICO_BRIDGE_OT_qr(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class PICO_BRIDGE_OT_center_markers(bpy.types.Operator):
+    bl_idname = 'pico_bridge.center_marker_only'
+    bl_label = 'Center reference only'
+    bl_description = 'Use one measured marker for size; screen curvature must be set manually'
+    def execute(self, context):
+        if _display and _display.board and _display.board.get('referenceMarker'):
+            _display.center_only = not _display.center_only
+            _display.overlay = True
+            _display.show_qr = False
+            _display.update(time.monotonic() - _server.last_client < 3)
+        else:
+            self.report({'WARNING'}, 'Enable markers in a larger viewport to show the center reference')
+        return {'FINISHED'}
+
+
 def auto_start_once():
     global _auto_start_attempted, _message
     _auto_start_attempted = True
@@ -444,6 +479,7 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
                 layout.template_icon(icon_value=_display.icon, scale=8)
                 layout.operator('pico_bridge.calibration_board', text='Hide markers' if _display.overlay else 'Show QR and markers')
                 layout.operator('pico_bridge.large_qr', text='Hide pairing QR' if _display.show_qr else 'Show large pairing QR')
+                layout.operator('pico_bridge.center_marker_only', text='Show all markers' if _display.center_only else 'Center reference only')
             layout.prop(cfg, 'allow_viewport_control')
             layout.prop(cfg, "token")
             layout.operator("pico_bridge.copy_pairing")
@@ -459,7 +495,7 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
 
 
 CLASSES = (PicoBridgeSettings, PICO_BRIDGE_OT_start, PICO_BRIDGE_OT_stop,
-           PICO_BRIDGE_OT_refresh, PICO_BRIDGE_OT_pairing, PICO_BRIDGE_OT_board, PICO_BRIDGE_OT_qr, PICO_BRIDGE_PT_panel)
+           PICO_BRIDGE_OT_refresh, PICO_BRIDGE_OT_pairing, PICO_BRIDGE_OT_board, PICO_BRIDGE_OT_qr, PICO_BRIDGE_OT_center_markers, PICO_BRIDGE_PT_panel)
 
 
 def register():

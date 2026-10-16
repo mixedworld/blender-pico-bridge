@@ -10,6 +10,7 @@ data class BridgeUiState(
     val sourceHidden: Boolean = false, val hideSource: Boolean = true, val hover: Boolean = false, val collapsed: Boolean = false, val connectionPanel: Boolean = false,
     val room: Boolean = false, val autoRoom: Boolean = false, val enteringRoom: Boolean = false,
     val monitor: MonitorCalibration = MonitorCalibration(),
+    val handleError: String? = null,
     val mode: InspectionMode = InspectionMode.SCALE, val explosion: Float = 0f, val partCount: Int = 0,
     val scanPurpose: ScanPurpose? = null, val scanRequest: Int = 0, val scanStatus: String = "",
     val measuredScreen: MeasuredScreen? = null,
@@ -17,9 +18,19 @@ data class BridgeUiState(
     val touchPhase: TouchAlignmentPhase = TouchAlignmentPhase.NONE, val touchingHand: TouchingHand = TouchingHand.RIGHT,
     val touchCount: Int = 0, val touchStatus: String = "Bring the touching fingertip into view.",
     val touchedMonitor: MonitorCalibration? = null, val touchApplied: Boolean = false,
+    val markerPhase: MarkerPhase = MarkerPhase.NONE, val markerSettings: MarkerSettings = MarkerSettings(),
+    val markerFrame: MarkerScanFrame? = null,
     val linkViewport: Boolean = false, val viewportAllowed: Boolean = false,
 )
 sealed interface BridgeUiEvent {
+    data object OpenMarkerAlignment : BridgeUiEvent
+    data class MarkerSideChanged(val value: Float) : BridgeUiEvent
+    data class MarkerCurveChanged(val value: Float) : BridgeUiEvent
+    data object StartMarkerScan : BridgeUiEvent
+    data object PauseMarkerReview : BridgeUiEvent
+    data object UseMarkerGeometry : BridgeUiEvent
+    data class WorldMonitorApplied(val request: WorldMonitorRequest,val calibration: MonitorCalibration) : BridgeUiEvent
+    data object BackFromMarkers : BridgeUiEvent
     data object OpenTouchAlignment : BridgeUiEvent
     data class TouchHandChanged(val hand: TouchingHand) : BridgeUiEvent
     data object StartTouchAlignment : BridgeUiEvent
@@ -37,6 +48,7 @@ sealed interface BridgeUiEvent {
     data object ManualConnection : BridgeUiEvent
     data class LinkViewport(val enabled: Boolean) : BridgeUiEvent
     data class MoveViewport(val delta: ViewportDelta) : BridgeUiEvent
+    data class TrackedCameraFrame(val camera: TrackedViewportCamera) : BridgeUiEvent
     data class EndpointChanged(val value: String) : BridgeUiEvent
     data class TokenChanged(val value: String) : BridgeUiEvent
     data object Connect : BridgeUiEvent
@@ -52,6 +64,7 @@ sealed interface BridgeUiEvent {
     data class RoomPending(val pending: Boolean) : BridgeUiEvent
     data object Fit : BridgeUiEvent
     data object SourceSize : BridgeUiEvent
+    data class MonitorHandleMoved(val index: Int,val delta: List<Float>) : BridgeUiEvent
     data object AlignMonitor : BridgeUiEvent
     data object LockMonitor : BridgeUiEvent
     data object LeaveMonitor : BridgeUiEvent

@@ -91,7 +91,7 @@ internal fun TouchTrackingEffect(request: TouchAlignmentRequest?,room: Boolean,a
                                 android.util.Log.i("BridgeTouch","contact accepted count=${contacts.size}")
                                 if (contacts.size==4) {
                                     try { latestEvent(BridgeUiEvent.TouchMeasured(request.id,runtime.monitorFromTouches(request,contacts))) }
-                                    catch (_: IllegalArgumentException) { latestEvent(BridgeUiEvent.TouchInvalid(request.id,"The four contacts do not form a consistent monitor plane.")) }
+                                    catch (error: IllegalArgumentException) { latestEvent(BridgeUiEvent.TouchInvalid(request.id,error.message ?: "The four contacts do not form a consistent monitor plane.")) }
                                 } else report("Marker recorded. Move to the next center, then release the confirming pinch.")
                             }
                         }

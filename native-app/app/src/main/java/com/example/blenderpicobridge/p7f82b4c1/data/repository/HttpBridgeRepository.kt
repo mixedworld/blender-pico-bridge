@@ -122,6 +122,21 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         } finally { connection.disconnect() }
     }
 
+    override suspend fun viewCamera(pairing: Pairing,session: String,revision: String,stream: String,sequence: Long,camera: TrackedViewportCamera?): Unit = withContext(Dispatchers.IO) {
+        val body=JSONObject().put("session",session).put("revision",revision).put("stream",stream).put("sequence",sequence).put("active",camera!=null)
+        camera?.let { body.put("position",JSONArray(it.position)).put("rotation",JSONArray(it.rotation))
+            .put("slopes",JSONArray(it.slopes)).put("near",it.near).put("far",it.far) }
+        val connection=URI(pairing.endpoint+"/v1/view-camera").toURL().openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod="POST";connection.doOutput=true;connection.connectTimeout=1000;connection.readTimeout=1000
+            connection.instanceFollowRedirects=false
+            connection.setRequestProperty("Authorization","Bearer ${pairing.token}")
+            connection.setRequestProperty("Content-Type","application/json")
+            connection.outputStream.use { it.write(body.toString().toByteArray()) }
+            check(connection.responseCode in listOf(200,202)) { "Tracked camera unavailable" }
+        } finally { connection.disconnect() }
+    }
+
     private fun decode(json: JSONObject): FramePacket {
         require(json.getInt("protocol") == 1) { "Unsupported Blender bridge protocol" }
         fun JSONArray.values(count: Int): List<Float> {
@@ -143,6 +158,12 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
                 require(marker.getInt("id") == index && rect.length() == 4)
                 MarkerRect(index, rect.getInt(0), rect.getInt(1), rect.getInt(2), rect.getInt(3)).also {
                     require(it.x >= 0 && it.y >= 0 && it.width > 0 && it.height > 0 && it.x+it.width <= width && it.y+it.height <= height)
+                }
+            },value.optJSONObject("referenceMarker")?.let { ref ->
+                val rect=ref.getJSONArray("rect")
+                require(ref.getInt("id")==4 && rect.length()==4)
+                MarkerRect(4,rect.getInt(0),rect.getInt(1),rect.getInt(2),rect.getInt(3)).also {
+                    require(it.x>=0 && it.y>=0 && it.width>0 && it.height>0 && it.x+it.width<=width && it.y+it.height<=height)
                 }
             })
         }
@@ -166,6 +187,7 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
             } },
             json.optJSONArray("viewQuaternion")?.values(4), json.optBoolean("sourceHidden", false),
             board, json.optBoolean("viewportControlEnabled", false),viewport,
+            json.optInt("cameraSyncVersion",0),json.optBoolean("cameraControlEnabled",false),
         )
     }
 }
