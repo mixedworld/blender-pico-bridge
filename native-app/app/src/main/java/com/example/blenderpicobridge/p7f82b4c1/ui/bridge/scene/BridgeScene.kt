@@ -3,6 +3,7 @@ package com.example.blenderpicobridge.p7f82b4c1.ui.bridge.scene
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.platform.LocalContext
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.SceneFeed
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.BridgeUiEvent
@@ -37,12 +38,22 @@ fun BridgeScene(feed: StateFlowHolder, modifier: Modifier, event: (BridgeUiEvent
     }
     val touch by remember(feed) { feed.flow.map { it.touchAlignment }.distinctUntilChanged() }.collectAsState(initial=null)
     TouchTrackingEffect(touch,room,attached,runtime,feed,event)
+    PersistentAlignmentEffect(room,attached,runtime,feed,event)
     val editing by remember(feed) { feed.flow.map { it.monitor.editing }.distinctUntilChanged() }.collectAsState(initial=false)
     val context = LocalContext.current
     DisposableEffect(runtime) { onDispose { runtime.close() } }
     // The same recognizer targets individual alignment guides or the inspection model.
     SpatialView(modifier = modifier.pointerInput(runtime,editing) {
-        detectSpatialTransformGesture(context, targetedToEntity = TargetEntity.any { feed.flow.value.debugReveal == null && feed.flow.value.touchAlignment == null && runtime.accepts(it) }, onTransform = runtime::manipulate)
+        // Observe before the SDK recognizer consumes the Main-pass event. In 6.1.9
+        // its first two-pointer centroid can arrive as a large translation delta.
+        awaitPointerEventScope {
+            while (true) {
+                val input = awaitPointerEvent(PointerEventPass.Initial)
+                runtime.gesturePointers(input.changes.filter { it.pressed }.map { it.id.value }.toSet())
+            }
+        }
+    }.pointerInput(runtime,editing) {
+        detectSpatialTransformGesture(context, targetedToEntity = TargetEntity.any { feed.flow.value.debugReveal == null && feed.flow.value.touchAlignment == null && runtime.accepts(it) }, onTransformBegin = runtime::beginGesture, onTransform = runtime::manipulate)
     }, initial = { content, attachments ->
         runtime.attach(content)
         attachments.entity("room-tools")?.let {

@@ -4,6 +4,7 @@ import hmac
 import json
 import math
 import secrets
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,6 +32,12 @@ class BridgeServer:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def setup(self):
+                super().setup()
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
             def log_message(self, *_):
                 pass
 
@@ -120,6 +127,10 @@ class BridgeServer:
 
             def respond(self, status, data, mime):
                 self.send_response(status)
+                if status >= 400:
+                    # Rejected POST bodies may be unread; do not reuse that connection.
+                    self.close_connection = True
+                    self.send_header("Connection", "close")
                 self.send_header("Content-Type", mime)
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("Cache-Control", "no-store")
@@ -143,6 +154,13 @@ class BridgeServer:
         # Content addressing makes identical exports idempotent.
         revision = hashlib.sha256(data).hexdigest()
         with self.lock:
+            if revision != self.state.get("revision"):
+                # An old-revision lease must not block the replacement's camera stream.
+                self.camera_command = None
+                self.camera_stream = None
+                self.camera_sequence = -1
+                self.camera_revision = None
+                self.camera_expires = 0.0
             self.models[revision] = data
             self.state.update(metadata or {})
             self.state["revision"] = revision

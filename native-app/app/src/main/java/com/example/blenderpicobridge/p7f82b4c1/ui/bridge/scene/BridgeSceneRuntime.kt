@@ -8,6 +8,8 @@ import com.example.blenderpicobridge.p7f82b4c1.domain.model.*
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.InspectionMode
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ExplosionUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.AnimationTimeUseCase
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.GestureContinuityUseCase
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ModelReplacementFitUseCase
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.BridgeUiEvent
 import com.pico.spatial.core.container.SpatialViewContent
 import com.pico.spatial.core.ecs.Entity
@@ -43,6 +45,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private val nodes = mutableMapOf<String, Entity>()
     private val animationTime = AnimationTimeUseCase()
     private val explosionLayer = ExplosionUseCase()
+    private val gestureContinuity = GestureContinuityUseCase()
     private var mode = InspectionMode.SCALE
     private var explosion = 0f
     private var latest: FramePacket? = null
@@ -62,6 +65,8 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private var homePosition = Vector3(0f, 1.2f, -1.5f)
     private var homeRotation = Quat()
     private var stagedPose: InspectionPose? = null
+    private var anchorReference: RigidPose? = null
+    private var pendingAnchoredPose: Pair<String?,InspectionPose?>? = null
     private var collisionKey = emptyList<Float>()
     var tools: Entity? = null
     private var revision: String? = null
@@ -115,7 +120,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     fun trackView(headPosition: Vector3) {
         if(!room || !linkedViewport || model==null || !calibration.enabled || !calibration.locked) return
         val now=SystemClock.elapsedRealtime()
-        if(now-lastCameraFrameAt<33) return
+        if(now-lastCameraFrameAt<11) return
         lastCameraFrameAt=now
         val screen=monitor?.anchor ?: return
         try {
@@ -153,6 +158,51 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         return calibration.copy(enabled=true,editing=false,locked=true,width=request.estimate.arcWidth,height=request.estimate.height,
             curveDegrees=request.estimate.curveDegrees,position=position.values(),quaternion=rotation.values())
     }
+
+    /** Capture all five controls in Stage metres through the public Entity conversion APIs. */
+    fun alignmentSnapshot(request: AlignmentSaveRequest): AlignmentSnapshot {
+        check(room && content!=null)
+        fun global(p: List<Float>)=placementOwner.convertPositionTo(p.vector(),null).values()
+        fun rotation(q: List<Float>)=placementOwner.convertRotationTo(q.quat(),null).values()
+        val stage=stagedPose?.let { it.copy(position=global(it.position),quaternion=rotation(it.quaternion)) }
+        return AlignmentSnapshot(request.monitor.copy(position=global(request.monitor.position),quaternion=rotation(request.monitor.quaternion)),
+            request.handles.copy(corners=request.handles.corners.map(::global)),stage,revision)
+    }
+
+    /** Called only on main, only after PICO has localized the saved UUID in the current Stage. */
+    fun anchoredAlignment(saved: SavedAlignment, reference: RigidPose, restoring: Boolean) {
+        check(room && content!=null)
+        val space=com.example.blenderpicobridge.p7f82b4c1.domain.usecase.AlignmentSpaceUseCase()
+        fun local(p: List<Float>)=placementOwner.convertPositionFrom(p.vector(),null).values()
+        fun rotation(q: List<Float>)=placementOwner.convertRotationFrom(q.quat(),null).values()
+        fun localPose(p: InspectionPose)=p.copy(position=local(p.position),quaternion=rotation(p.quaternion))
+        val previous=anchorReference
+        if(previous!=null) {
+            // A room recenter moves the frame, the current inspection and Reset take together.
+            val delta=reference*previous.inverse()
+            fun moved(p: InspectionPose): InspectionPose {
+                val world=p.copy(position=placementOwner.convertPositionTo(p.position.vector(),null).values(),
+                    quaternion=placementOwner.convertRotationTo(p.quaternion.quat(),null).values())
+                return localPose(space.inspection(world,delta))
+            }
+            if(model!=null) restorePose(moved(snapshot()))
+            stagedPose=stagedPose?.let(::moved)
+            pendingAnchoredPose=pendingAnchoredPose?.let { it.first to it.second?.let(::moved) }
+        }
+        val global=space(saved.relative,reference)
+        val localized=global.copy(monitor=global.monitor.copy(position=local(global.monitor.position),quaternion=rotation(global.monitor.quaternion)),
+            handles=global.handles.copy(corners=global.handles.corners.map(::local)),stagedPose=global.stagedPose?.let(::localPose))
+        if(previous==null && restoring) {
+            restored=true // Initial HMD placement must not overwrite the localized frame or its fit.
+            pendingAnchoredPose=localized.revision to localized.stagedPose
+        }
+        anchorReference=reference
+        calibration=localized.monitor.copy(enabled=true,editing=false,locked=true)
+        event(BridgeUiEvent.AlignmentRestored(calibration,localized.handles))
+        Log.i("BlenderBridge","ALIGNMENT_LOCALIZED restoring=$restoring corners=${localized.handles.corners.size} curve=${calibration.curveDegrees}")
+    }
+
+    fun detachAlignmentAnchor() { anchorReference=null;pendingAnchoredPose=null }
 
     fun measure() {
         if (room) return
@@ -199,10 +249,13 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             val position = transform.position
             val available = min(half.x - abs(position.x), min(half.y - abs(position.y), half.z - abs(position.z)))
             require(room || available > .001f) { "Reset the view to provide space for this model" }
-            val fit = if (room) 1f else available / (bounds.boundingSphereRadius * 1.2f * inspectionScale)
+            val previousPose = if (room && model != null) snapshot() else null
+            val replacementFit = ModelReplacementFitUseCase()(room, previousPose, bounds.center.values(),
+                bounds.boundingSphereRadius, available, inspectionScale)
+            val fit = replacementFit.scale
             nextFit.components[TransformComponent::class.java]!!.apply {
                 scaleVector = Vector3(fit, fit, fit)
-                this.position = bounds.center * -fit
+                this.position = replacementFit.offset.vector()
             }
             val readyBounds = incoming.getVisualBounds(placementOwner, true, false)
             // Preview initially fits the current assembled model. Separation may refit later.
@@ -240,6 +293,8 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             Log.i("BlenderBridge", "MODEL revision=${revision?.take(8)} nodes=${nodes.size} textures=${packet.textureCount} controllers=${controllers.size} fit=$fit half=$half contained=${contained()}")
             event(BridgeUiEvent.ModelReady(packet.revision!!, fit))
             event(BridgeUiEvent.InspectionChanged(inspectionScale))
+            if (previousPose != null) savePose()
+            Log.i("BlenderBridge", "MODEL_SWAP preserveRoomFit=${previousPose!=null} fit=$fit offset=${replacementFit.offset} carrier=${transform.position} inspectionScale=$inspectionScale")
         } catch (error: Exception) {
             if (!committed) {
                 nextControllers.forEach { runCatching { it.stop(); it.close() } }
@@ -311,6 +366,9 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             abs(bounds.center.y) + bounds.halfExtent.y <= half.y + .001f &&
             abs(bounds.center.z) + bounds.halfExtent.z <= half.z + .001f)
 
+    fun gesturePointers(ids: Set<Long>) = gestureContinuity.pointers(ids)
+    fun beginGesture() = gestureContinuity.rebase()
+
     fun manipulate(value: SpatialTransformValue) {
         if (model == null) return
         val target=value.targetEntity ?: return
@@ -327,6 +385,10 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         // Full public conversion accounts for the reflection between View and ECS axes.
         val converted = owner.convertRotation(value.rotation.toQuaternion(), ViewCoordinateSpace.Global, owner.localSpatialCoordinateSpace)
         val rotation = converted * basis.conjugate()
+        if (!gestureContinuity.accept((moved-origin).values(),value.scaleValue,rotation.values())) {
+            Log.i("BlenderBridge", "HAND_REBASE skipped discontinuous or transition sample")
+            return
+        }
         if (value.targetEntity == tools) {
             tools?.components?.get(TransformComponent::class.java)?.apply { position = position + moved - origin; quaternion = rotation * quaternion }
             return
@@ -362,7 +424,9 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             inspectionScale = (inspectionScale * value.scaleValue).coerceIn(.1f, 10f)
         }
         transform.position = oldPosition + moved - origin
-        transform.quaternion = rotation * oldRotation
+        val nextRotation = rotation * oldRotation
+        val rotationLength = sqrt(nextRotation.x*nextRotation.x + nextRotation.y*nextRotation.y + nextRotation.z*nextRotation.z + nextRotation.w*nextRotation.w)
+        transform.quaternion = Quat(nextRotation.x/rotationLength,nextRotation.y/rotationLength,nextRotation.z/rotationLength,nextRotation.w/rotationLength)
         transform.scaleVector = Vector3(inspectionScale, inspectionScale, inspectionScale)
         if (!contained()) {
             inspectionScale = oldScale
@@ -411,6 +475,14 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         if (!restored && model != null) {
             restored = true
             (if (room) feed.roomPose else feed.previewPose)?.let(::restorePose)
+        }
+        if(model!=null && pendingAnchoredPose!=null && calibration.enabled && calibration.locked) {
+            val pending=pendingAnchoredPose!!;pendingAnchoredPose=null
+            if(pending.first==revision && pending.second!=null) {
+                stagedPose=pending.second;restorePose(pending.second!!)
+                event(BridgeUiEvent.Feedback("Saved viewport frame, curvature and staged fit restored."))
+            } else stageTake() // A different scene gets a fresh fit behind the retained frame.
+            commandSequence=feed.commandSequence // Do not replay an old Stage command after restoring.
         }
         if (model != null && commandSequence != feed.commandSequence) {
             commandSequence = feed.commandSequence

@@ -67,6 +67,8 @@ sealed interface BridgeUiEvent {
     data class MonitorHandleMoved(val index: Int,val delta: List<Float>) : BridgeUiEvent
     data object AlignMonitor : BridgeUiEvent
     data object LockMonitor : BridgeUiEvent
+    data object AlignmentLocating : BridgeUiEvent
+    data class AlignmentRestored(val monitor: MonitorCalibration, val handles: MonitorHandleDraft) : BridgeUiEvent
     data object LeaveMonitor : BridgeUiEvent
     data object StageTake : BridgeUiEvent
     data object ResetTake : BridgeUiEvent

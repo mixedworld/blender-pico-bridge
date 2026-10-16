@@ -7,7 +7,13 @@ class FakeBridgeRepository : BridgeRepository {
     val visibility = mutableListOf<Boolean>()
     val viewportCommands = mutableListOf<ViewportDelta>()
     val cameraCommands = mutableListOf<Pair<Long,TrackedViewportCamera?>>()
-    override suspend fun viewCamera(pairing: Pairing,session: String,revision: String,stream: String,sequence: Long,camera: TrackedViewportCamera?) { cameraCommands.add(sequence to camera) }
+    var cameraFailure: Exception? = null
+    val cameraRevisions = mutableListOf<String>()
+    override suspend fun viewCamera(pairing: Pairing,session: String,revision: String,stream: String,sequence: Long,camera: TrackedViewportCamera?) {
+        if (camera != null) cameraFailure?.let { throw it }
+        cameraCommands.add(sequence to camera)
+        cameraRevisions.add(revision)
+    }
     override suspend fun viewportDelta(pairing: Pairing, session: String, requestId: String, delta: ViewportDelta) { viewportCommands.add(delta) }
     override suspend fun setSourceHidden(pairing: Pairing, hidden: Boolean) { visibility.add(hidden) }
     val events = MutableSharedFlow<BridgeUpdate>(extraBufferCapacity = 16)

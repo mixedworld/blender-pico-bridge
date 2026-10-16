@@ -55,4 +55,33 @@ class MonitorHandleViewModelTest {
             assertNull(model.state.value.handleError)
         }
     }
+    @Test fun lockingSavesExactCornerResidualAndCurvatureAndReopeningRetainsThem() {
+        model.onEvent(BridgeUiEvent.MonitorHandleMoved(0,listOf(0f,.002f,0f)))
+        model.onEvent(BridgeUiEvent.MonitorHandleMoved(4,listOf(0f,0f,-.03f)))
+        val draft=model.scene.value.monitorHandles!!
+        model.onEvent(BridgeUiEvent.LockMonitor)
+        val save=model.scene.value.alignmentSave!!
+        assertEquals(draft,save.handles);assertTrue(save.monitor.curveDegrees>0)
+        model.onEvent(BridgeUiEvent.AlignMonitor)
+        assertNull(model.scene.value.alignmentSave)
+        assertEquals(draft,model.scene.value.monitorHandles)
+    }
+    @Test fun restoredAlignmentRetainsExactHandlesButCannotOverwriteAnActiveEdit() {
+        val draft=model.scene.value.monitorHandles!!
+        val restored=model.state.value.monitor.copy(position=listOf(1f,2f,3f),editing=false,locked=true)
+        model.onEvent(BridgeUiEvent.AlignmentRestored(restored,draft))
+        assertNotEquals(restored,model.state.value.monitor)
+        model.onEvent(BridgeUiEvent.LockMonitor)
+        model.onEvent(BridgeUiEvent.AlignmentRestored(restored,draft))
+        assertEquals(restored,model.state.value.monitor)
+        model.onEvent(BridgeUiEvent.AlignMonitor)
+        assertEquals(draft,model.scene.value.monitorHandles)
+    }
+    @Test fun roomExitDoesNotReplayAConsumedAnchorSave() {
+        model.onEvent(BridgeUiEvent.LockMonitor)
+        assertNotNull(model.scene.value.alignmentSave)
+        model.onEvent(BridgeUiEvent.RoomChanged(false))
+        assertNull(model.scene.value.alignmentSave)
+    }
+
 }
