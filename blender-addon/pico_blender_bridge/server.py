@@ -23,6 +23,11 @@ class BridgeServer:
         self.visibility_expires = 0.0
         self.viewport_command = None
         self.viewport_requests = {}
+        self.camera_command = None
+        self.camera_stream = None
+        self.camera_sequence = -1
+        self.camera_revision = None
+        self.camera_expires = 0.0
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -55,14 +60,35 @@ class BridgeServer:
                     self.respond(401, b'{"error":"Pairing token required"}', "application/json")
                     return
                 path = urlsplit(self.path).path
-                if path not in ("/v1/source-visibility", "/v1/viewport-delta"):
+                if path not in ("/v1/source-visibility", "/v1/viewport-delta", "/v1/view-camera"):
                     self.respond(404, b'{"error":"Not found"}', "application/json")
                     return
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < length <= (2048 if path == "/v1/viewport-delta" else 64):
+                    if not 0 < length <= (2048 if path in ("/v1/viewport-delta", "/v1/view-camera") else 64):
                         raise ValueError("Invalid body size")
                     body = json.loads(self.rfile.read(length))
+                    if path == "/v1/view-camera":
+                        owner.validate_view_camera(body)
+                        with owner.lock:
+                            if body['session'] != owner.session or body['revision'] != owner.state.get('revision') or not owner.state.get('cameraControlEnabled'):
+                                self.respond(409, b'{"error":"Camera control disabled or source changed"}', "application/json")
+                                return
+                            now = time.monotonic()
+                            if owner.camera_stream != body['stream']:
+                                if owner.camera_expires > now:
+                                    self.respond(409, b'{"error":"Another camera stream owns the view"}', "application/json")
+                                    return
+                                owner.camera_stream, owner.camera_sequence = body['stream'], -1
+                            if body['sequence'] <= owner.camera_sequence:
+                                self.respond(200, b'{"ok":true,"stale":true}', "application/json")
+                                return
+                            owner.camera_sequence = body['sequence']
+                            owner.camera_revision = body['revision']
+                            owner.camera_command = (now, body)
+                            owner.camera_expires = now + 1.0 if body['active'] else 0.0
+                        self.respond(202, b'{"ok":true}', "application/json")
+                        return
                     if path == "/v1/viewport-delta":
                         owner.validate_viewport_delta(body)
                         with owner.lock:
@@ -135,6 +161,45 @@ class BridgeServer:
         # Main-thread Blender timer consumes this intent; HTTP threads never touch bpy.
         with self.lock:
             return self.visibility_hidden and time.monotonic() < self.visibility_expires
+
+    @staticmethod
+    def validate_view_camera(body):
+        base = {'session', 'stream', 'sequence', 'revision', 'active'}
+        if not isinstance(body, dict) or type(body.get('active')) is not bool:
+            raise ValueError('Expected camera stream')
+        fields = {'position', 'rotation', 'slopes', 'near', 'far'} if body['active'] else set()
+        if set(body) != base | fields:
+            raise ValueError('Unexpected camera fields')
+        for key in ('session', 'stream'):
+            if not isinstance(body[key], str) or not 1 <= len(body[key]) <= 64:
+                raise ValueError('Invalid identity')
+        if not isinstance(body['revision'], str) or len(body['revision']) != 64 or any(c not in '0123456789abcdef' for c in body['revision']):
+            raise ValueError('Invalid model revision')
+        if type(body['sequence']) is not int or not 0 <= body['sequence'] <= 2**53:
+            raise ValueError('Invalid sequence')
+        if not body['active']:
+            return
+        def number(v):
+            return type(v) in (float, int) and math.isfinite(v) and abs(v) <= 1e6
+        for key, count in (('position', 3), ('rotation', 4), ('slopes', 4)):
+            if not isinstance(body[key], list) or len(body[key]) != count or not all(number(v) for v in body[key]):
+                raise ValueError('Invalid camera vector')
+        if not .99 <= sum(v*v for v in body['rotation']) <= 1.01:
+            raise ValueError('Invalid camera rotation')
+        left, right, bottom, top = body['slopes']
+        if not (1e-4 < right-left < 20 and 1e-4 < top-bottom < 20 and max(map(abs, body['slopes'])) < 20):
+            raise ValueError('Invalid frustum')
+        if not number(body['near']) or not number(body['far']) or not 1e-5 <= body['near'] < body['far'] <= 1e6:
+            raise ValueError('Invalid clipping')
+
+    def take_camera_command(self):
+        with self.lock:
+            pending, self.camera_command = self.camera_command, None
+            return pending[1] if pending and time.monotonic()-pending[0] <= .5 else None
+
+    def camera_lease_active(self):
+        with self.lock:
+            return self.camera_expires > time.monotonic() and bool(self.state.get('cameraControlEnabled')) and self.camera_revision == self.state.get('revision')
 
     @staticmethod
     def validate_viewport_delta(body):

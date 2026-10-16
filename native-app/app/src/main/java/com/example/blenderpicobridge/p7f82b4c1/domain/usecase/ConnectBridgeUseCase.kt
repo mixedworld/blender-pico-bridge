@@ -14,5 +14,6 @@ class ConnectBridgeUseCase(private val repository: BridgeRepository) {
     }
     suspend fun setSourceHidden(pairing: Pairing, hidden: Boolean) = repository.setSourceHidden(validate(pairing), hidden)
     suspend fun viewportDelta(pairing: Pairing, session: String, requestId: String, delta: ViewportDelta) = repository.viewportDelta(validate(pairing),session,requestId,delta)
+    suspend fun viewCamera(pairing: Pairing,session: String,revision: String,stream: String,sequence: Long,camera: TrackedViewportCamera?) = repository.viewCamera(validate(pairing),session,revision,stream,sequence,camera)
     operator fun invoke(pairing: Pairing) = repository.observe(validate(pairing).also(repository::savePairing))
 }

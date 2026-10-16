@@ -141,4 +141,4 @@ The Mac development workflow has exercised GLB import, embedded image materials,
 
 Windows commands are supplied for reproducibility, but this project has not been run on a Windows host here. A successful x86-64 build is not a Windows runtime pass. Real hand-tracking comfort, physical lighting, sustained frame rate and full visual-design fidelity are separate validation work.
 
-Room, monitor occlusion, source hiding and physical casting exist as experimental code. They are deliberately outside the emulator-only getting-started path. Corner handles, curved monitor occlusion and automatic monitor calibration are not implemented.
+Room, monitor occlusion, source hiding and physical casting exist as experimental code. They are deliberately outside the emulator-only getting-started path. Five-handle viewport placement is the primary Room alignment method; align the handles to the Blender 3D viewport image boundary, not the physical monitor. Curved occlusion and marker/depth/touch calibration are implemented experimental paths. See [alignment and validation details](QR_ALIGNMENT.md#manual-alignment-with-five-handles).

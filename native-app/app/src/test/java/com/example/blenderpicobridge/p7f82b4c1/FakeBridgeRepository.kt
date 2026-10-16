@@ -6,6 +6,8 @@ class FakeBridgeRepository : BridgeRepository {
     var pairing = Pairing("http://192.168.1.2:8766", "test-token")
     val visibility = mutableListOf<Boolean>()
     val viewportCommands = mutableListOf<ViewportDelta>()
+    val cameraCommands = mutableListOf<Pair<Long,TrackedViewportCamera?>>()
+    override suspend fun viewCamera(pairing: Pairing,session: String,revision: String,stream: String,sequence: Long,camera: TrackedViewportCamera?) { cameraCommands.add(sequence to camera) }
     override suspend fun viewportDelta(pairing: Pairing, session: String, requestId: String, delta: ViewportDelta) { viewportCommands.add(delta) }
     override suspend fun setSourceHidden(pairing: Pairing, hidden: Boolean) { visibility.add(hidden) }
     val events = MutableSharedFlow<BridgeUpdate>(extraBufferCapacity = 16)

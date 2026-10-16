@@ -32,6 +32,7 @@ internal fun BridgeControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         when {
             state.connectionPanel -> ConnectionControls(state, event)
+            setup && state.markerPhase != com.example.blenderpicobridge.p7f82b4c1.domain.model.MarkerPhase.NONE -> MarkerAlignmentControls(state,event)
             setup && state.touchPhase != com.example.blenderpicobridge.p7f82b4c1.domain.model.TouchAlignmentPhase.NONE -> TouchAlignmentControls(state,event)
             setup -> MonitorControls(state, event)
             else -> {
@@ -56,7 +57,7 @@ internal fun BridgeControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit
                     Switch(checked = state.hover, onCheckedChange = { event(BridgeUiEvent.HoverChanged(it)) })
                 })
                 if (state.room) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Action("Align monitor", { event(BridgeUiEvent.AlignMonitor) }, Modifier.weight(1f), state.hasModel)
+                    Action("Align viewport", { event(BridgeUiEvent.AlignMonitor) }, Modifier.weight(1f), state.hasModel)
                     Action("Reset take", { event(BridgeUiEvent.ResetTake) }, Modifier.weight(1f), state.hasModel)
                 }
                 if (state.room) ListItem(modifier = Modifier.clickable { event(BridgeUiEvent.SourceHidingChanged(!state.hideSource)) }, headlineContent = { Text("Hide Blender source") },
@@ -77,7 +78,10 @@ internal fun BridgeControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit
 
 @Composable
 private fun ColumnScope.MonitorControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit) {
-    Body("Align monitor")
+    Body("Align viewport")
+    Label("Place cyan handles on Blender’s 3D viewport corners, not the monitor corners. Move the amber top-centre handle in/out to match the curve.")
+    Action("Reset corner handles",{ event(BridgeUiEvent.AlignMonitor) },Modifier.fillMaxWidth(),state.scanPurpose==null)
+    Action("Scan known-size marker",{ event(BridgeUiEvent.OpenMarkerAlignment) },Modifier.fillMaxWidth(),state.scanPurpose==null)
     Action("Touch marker centers", { event(BridgeUiEvent.OpenTouchAlignment) }, Modifier.fillMaxWidth(),state.scanPurpose == null)
     if (state.touchApplied) TouchBody("Touch alignment applied. Check the monitor plane, then choose Lock alignment in the alignment controls.")
     Action("Measure with markers + depth", { event(BridgeUiEvent.ScanRequested(ScanPurpose.DEPTH)) }, Modifier.fillMaxWidth(), state.scanPurpose == null)
@@ -87,16 +91,16 @@ private fun ColumnScope.MonitorControls(state: BridgeUiState, event: (BridgeUiEv
         Label("Measured ${"%.3f".format(size.width)} × ${"%.3f".format(size.height)} m")
         Action("Use measured size", { event(BridgeUiEvent.UseMeasuredSize) }, Modifier.fillMaxWidth())
     }
-    Label("Grab and rotate the plane to match your screen. Adjust width and height separately.")
-    Label("Width · ${"%.2f".format(state.monitor.width)} m")
+    Label(state.handleError ?: "Align to the viewport image · exclude Blender panels and the monitor bezel")
+    Label("${if(state.monitor.curveDegrees>0f) "Arc width" else "Width"} · ${"%.2f".format(state.monitor.width)} m · ${state.monitor.curveDegrees.toInt()}°")
     Slider(state.monitor.width, { event(BridgeUiEvent.MonitorWidth(it)) }, valueRange = .1f..2f, modifier = Modifier.fillMaxWidth())
     Label("Height · ${"%.2f".format(state.monitor.height)} m")
     Slider(state.monitor.height, { event(BridgeUiEvent.MonitorHeight(it)) }, valueRange = .1f..2f, modifier = Modifier.fillMaxWidth())
-    Action("Stage for take", { event(BridgeUiEvent.StageTake) }, Modifier.fillMaxWidth(), state.hasModel)
+    Action("Stage for take", { event(BridgeUiEvent.StageTake) }, Modifier.fillMaxWidth(), state.hasModel && state.handleError==null)
     Label(state.note)
     Spacer(Modifier.weight(1f))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Action("Lock alignment", { event(BridgeUiEvent.LockMonitor) }, Modifier.weight(1f))
+        Action("Lock alignment", { event(BridgeUiEvent.LockMonitor) }, Modifier.weight(1f),state.handleError==null)
         Action("Back", { event(BridgeUiEvent.LeaveMonitor) }, Modifier.weight(1f))
     }
 }

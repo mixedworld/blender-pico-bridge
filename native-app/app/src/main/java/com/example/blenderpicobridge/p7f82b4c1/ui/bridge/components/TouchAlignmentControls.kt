@@ -36,7 +36,7 @@ internal fun TouchAlignmentControls(state: BridgeUiState,event: (BridgeUiEvent)-
                 state.touchedMonitor?.let { TouchBody("Measured %.3f × %.3f m".format(it.width,it.height),true) }
                 TouchBody("Use this alignment to position the monitor plane. Check the result, then choose Lock alignment.")
             }
-            TouchAlignmentPhase.INVALID -> TouchBody("The four touches could not form a reliable monitor plane. Restart and touch each marker center again. Previous alignment is unchanged.")
+            TouchAlignmentPhase.INVALID -> TouchBody("${state.touchStatus} Previous alignment is unchanged. Restart and touch each marker center again.")
             TouchAlignmentPhase.NONE -> Unit
         }
         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {

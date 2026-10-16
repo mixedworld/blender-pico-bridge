@@ -94,6 +94,34 @@ class TransportTest(unittest.TestCase):
             self.fetch(f"/v1/models/{first}.glb")
         self.assertEqual(error.exception.code, 404)
 
+    def test_camera_stream_is_latest_wins_ordered_leased_and_model_bound(self):
+        revision=self.server.publish_model(b'camera fixture')
+        body=dict(session=self.server.session,stream='head-1',sequence=1,revision=revision,active=True,
+                  position=[0,0,1],rotation=[0,0,0,1],slopes=[-.4,.4,-.2,.2],near=1,far=100)
+        def post(value,token='test-secret'):
+            return self.post_visibility(value,token,'/v1/view-camera')
+        for token,code in [('wrong',401),('test-secret',409)]:
+            with self.assertRaises(urllib.error.HTTPError) as error: post(body,token)
+            self.assertEqual(code,error.exception.code)
+        self.server.publish_state({'cameraControlEnabled':True})
+        for patch in ({'rotation':[0,0,0,0]},{'slopes':[1,1,-1,1]}, {'near':-1}, {'position':[True,0,1]}, {'sequence':True}, {'extra':1}):
+            with self.assertRaises(urllib.error.HTTPError) as error: post({**body,**patch})
+            self.assertEqual(400,error.exception.code)
+        with post(body): pass
+        with post({**body,'sequence':3,'position':[.2,0,1]}): pass
+        with post({**body,'sequence':2}): pass
+        self.assertEqual(3,self.server.take_camera_command()['sequence'])
+        self.assertTrue(self.server.camera_lease_active())
+        with self.assertRaises(urllib.error.HTTPError) as error: post({**body,'stream':'other'})
+        self.assertEqual(409,error.exception.code)
+        release={k:body[k] for k in ('session','stream','revision')}
+        with post({**release,'sequence':4,'active':False}): pass
+        self.assertFalse(self.server.camera_lease_active())
+        self.assertFalse(self.server.take_camera_command()['active'])
+        with post({**body,'sequence':5}): pass
+        self.server.publish_model(b'changed')
+        self.assertFalse(self.server.camera_lease_active())
+
 
 if __name__ == "__main__":
     unittest.main()
