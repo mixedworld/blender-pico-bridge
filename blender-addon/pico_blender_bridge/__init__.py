@@ -1,6 +1,6 @@
 bl_info = {
     "name": "PICO Blender Bridge", "author": "PICO Blender Bridge",
-    "version": (0, 6, 1), "blender": (4, 2, 0),
+    "version": (0, 6, 2), "blender": (4, 2, 0),
     "location": "3D View > Sidebar > PICO Bridge",
     "description": "Live PBR model and Blender timeline bridge to PICO Spatial SDK",
     "category": "3D View",
@@ -15,7 +15,7 @@ import tempfile
 import time
 from bpy.app.handlers import persistent
 from .server import BridgeServer
-from .glb import with_explosion_parts
+from .glb import with_explosion_parts, with_viewport_materials, material_profile
 from .pairing import pairing_payload
 from .display import PairingDisplay
 from .tracked_camera import TrackedCamera
@@ -66,6 +66,18 @@ def scoped_objects():
     return allowed
 
 
+def export_signature(scene):
+    cfg = scene.pico_bridge
+    return (scene.frame_start, scene.frame_end, scene.render.fps / scene.render.fps_base,
+            material_profile(scene.render.engine, cfg.native_materials))
+
+
+def native_materials_changed(_self, _context):
+    global _dirty_at
+    if _server and not _exporting:
+        _dirty_at = time.monotonic()
+
+
 def export_model():
     global _exporting, _dirty_at, _message, _node_names, _clip_start, _clip_fps, _export_signature
     if not _server:
@@ -105,17 +117,22 @@ def export_model():
         # Offset edits must create a new content-addressed revision and refit envelope.
         data = with_explosion_parts(data, parts)
         cfg = settings()
+        profile = material_profile(scene.render.engine, cfg.native_materials)
+        if profile == "VIEWPORT":
+            colors = {slot.material.name: list(slot.material.diffuse_color)
+                      for obj in objects for slot in obj.material_slots if slot.material}
+            data = with_viewport_materials(data, colors)
         _message = f"Published {len(objects)} objects · {len(data) / 1048576:.1f} MB"
         revision = _server.publish_model(data, {"error": None, "modelName": cfg.collection.name if cfg.collection else scene.name,
                                "exportFrameStart": scene.frame_start, "exportFrameEnd": scene.frame_end,
                                "exportFps": scene.render.fps / scene.render.fps_base,
                                "objectCount": len(objects), "animationCount": len(document.get("animations", [])),
-                               "textureCount": len(document.get("images", [])),
+                               "textureCount": len(document.get("images", [])) if profile == "PBR" else 0,
                                "explodeParts": parts})
         cfg.last_revision = revision[:12]
         _clip_start = scene.frame_start
         _clip_fps = scene.render.fps / scene.render.fps_base
-        _export_signature = (scene.frame_start, scene.frame_end, _clip_fps)
+        _export_signature = export_signature(scene)
     finally:
         os.unlink(tmp.name)
         scene.frame_set(frame)
@@ -272,7 +289,7 @@ def tick():
         _server.publish_state({'lastViewportRequest': command['requestId']})
     playing = any(screen.is_animation_playing for screen in bpy.data.screens)
     fps = scene.render.fps / scene.render.fps_base
-    if cfg.auto_export and _export_signature != (scene.frame_start, scene.frame_end, fps) and not _dirty_at:
+    if cfg.auto_export and _export_signature != export_signature(scene) and not _dirty_at:
         _dirty_at = time.monotonic()
     # Transform packets cover object/constraint animation even when the SDK exposes
     # imported animation resources only on skinned meshes. Basis conversion matches glTF Y-up.
@@ -452,6 +469,11 @@ class PicoBridgeSettings(bpy.types.PropertyGroup):
         items=[('LAN', 'Wi-Fi / LAN', 'Both devices must reach this computer over the network'),
                ('USB', 'USB / Emulator (ADB)', 'Requires adb reverse tcp:8766 tcp:8766 for the selected device')])
     token: bpy.props.StringProperty(name="Pairing token", subtype="PASSWORD")
+    native_materials: bpy.props.EnumProperty(name="Native materials", default="AUTO", update=native_materials_changed,
+        description="Appearance of the native PICO model, independent of the render stream",
+        items=[("AUTO", "Auto", "Use matte material viewport colours for Workbench; authored PBR for Cycles/Eevee"),
+               ("PBR", "PBR materials", "Export authored shader materials and supported textures"),
+               ("VIEWPORT", "Viewport colours (matte)", "Use Material Viewport Display colours without gloss, textures or MatCap lighting")])
     auto_export: bpy.props.BoolProperty(name="Sync model edits", default=True)
     auto_start: bpy.props.BoolProperty(name="Start when panel opens", default=True)
     allow_viewport_control: bpy.props.BoolProperty(name="Allow PICO viewport control", default=False,
@@ -612,6 +634,9 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
         layout.prop(cfg, "scope")
         if cfg.scope == "COLLECTION":
             layout.prop(cfg, "collection")
+        layout.prop(cfg, "native_materials")
+        if material_profile(context.scene.render.engine, cfg.native_materials) == "VIEWPORT":
+            layout.label(text="Native: matte material viewport colours")
         layout.prop(cfg, "auto_export")
         if _server:
             layout.prop(cfg, 'pairing_route')
