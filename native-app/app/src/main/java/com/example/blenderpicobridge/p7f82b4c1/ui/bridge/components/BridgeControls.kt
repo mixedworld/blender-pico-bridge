@@ -46,8 +46,8 @@ internal fun BridgeControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit
                 }
                 Label(if (state.room && state.fitScale == 1f) "Source scale · ${"%.2f".format(state.scale)}×" else "Auto-fit ${"%.3f".format(state.fitScale)}× · grab ${"%.2f".format(state.scale)}×")
                 ListItem(headlineContent = { Text("Link Blender viewport") }, supportingContent = {
-                    Text(if (state.linkViewport) "Gestures control Blender's view; objects stay unchanged" else "Enable viewport control in Blender to link")
-                }, trailingContent = { Switch(checked = state.linkViewport,onCheckedChange = { event(BridgeUiEvent.LinkViewport(it)) }, enabled = state.hasModel && state.viewportAllowed) })
+                    Text(if(state.renderWindow.enabled) "Managed by Render window mode" else if (state.linkViewport) "Gestures control Blender's view; objects stay unchanged" else "Enable viewport control in Blender to link")
+                }, trailingContent = { Switch(checked = state.linkViewport,onCheckedChange = { event(BridgeUiEvent.LinkViewport(it)) }, enabled = state.hasModel && state.viewportAllowed && !state.renderWindow.enabled) })
                 Slider(value = state.explosion, onValueChange = { event(BridgeUiEvent.ExplosionChanged(it)) }, modifier = Modifier.fillMaxWidth(), enabled = state.partCount > 0)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Action(if (state.room) "100% source" else "Fit preview", { event(if (state.room) BridgeUiEvent.SourceSize else BridgeUiEvent.Fit) }, Modifier.weight(1f), state.hasModel)
@@ -60,10 +60,11 @@ internal fun BridgeControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit
                     Action("Align viewport", { event(BridgeUiEvent.AlignMonitor) }, Modifier.weight(1f), state.hasModel)
                     Action("Reset take", { event(BridgeUiEvent.ResetTake) }, Modifier.weight(1f), state.hasModel)
                 }
-                if (state.room) ListItem(modifier = Modifier.clickable { event(BridgeUiEvent.SourceHidingChanged(!state.hideSource)) }, headlineContent = { Text("Hide Blender source") },
-                    supportingContent = { Text(if (state.sourceHidden) "Source hidden · Reset take restores" else if (state.hideSource) "After full extraction · restore on Reset take" else "Source remains visible") }, trailingContent = {
-                        Switch(checked = state.hideSource, onCheckedChange = { event(BridgeUiEvent.SourceHidingChanged(it)) })
+                if (state.room) ListItem(modifier = Modifier.clickable(enabled=!state.renderWindow.enabled) { event(BridgeUiEvent.SourceHidingChanged(!state.hideSource)) }, headlineContent = { Text("Hide Blender source") },
+                    supportingContent = { Text(if(state.renderWindow.enabled) "Kept visible while sharing the render window" else if (state.sourceHidden) "Source hidden · Reset take restores" else if (state.hideSource) "After full extraction · restore on Reset take" else "Source remains visible") }, trailingContent = {
+                        Switch(checked = state.hideSource, onCheckedChange = { event(BridgeUiEvent.SourceHidingChanged(it)) },enabled=!state.renderWindow.enabled)
                     })
+                if(state.room)RenderWindowControls(state,event)
                 Label(state.note)
                 Label("Frame ${state.frame} · ${if (state.playing) "Playing" else "Paused"} · ${(state.explosion * 100).toInt()}% / ${state.partCount} parts")
                 Spacer(Modifier.weight(1f))

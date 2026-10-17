@@ -25,7 +25,7 @@ fun RoomScreen() {
             navigator.openWindowContainer("BlenderInspection")
         }
     }
-    BridgeScene(feed, Modifier, model::onEvent, room = true, tools = {
+    BridgeScene(feed, Modifier, model::onEvent, room = true, renderVideo=model.renderVideo, tools = {
         ToolsRecoveryButton {
             model.onEvent(BridgeUiEvent.CollapseChanged(false))
             navigator.openWindowContainer("BlenderTools", tag = "tools")

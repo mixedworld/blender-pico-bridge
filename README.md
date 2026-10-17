@@ -44,6 +44,12 @@ For later sessions, repeat these steps with your own `.blend` file. To publish a
 
 See the [five-handle walkthrough](docs/QR_ALIGNMENT.md#manual-alignment-with-five-handles) for details. Marker, depth and touch methods remain experimental alternatives.
 
+## Optional Cycles render window
+
+The `feature/cycles-render-window` branch adds a movable WebRTC video window in Room. In Blender’s **PICO Bridge** panel, click **Share render window**, share the **Blender window** in Chrome, then enable **Tools → Render window → Show render window** in PICO. Grab it to move; use two hands to resize. Toggle **Scene-aligned** for a window into the native model, or **Live display** for Blender’s current view.
+
+See the [render-window setup and mode guide](docs/RENDER_WINDOW.md). This is experimental and requires matching source builds; it is separate from the released emulator baseline.
+
 ## What it does
 
 - **Native PBR preview:** GLB geometry and supported image textures, with native environment lighting.
@@ -53,7 +59,7 @@ See the [five-handle walkthrough](docs/QR_ALIGNMENT.md#manual-alignment-with-fiv
 - **Live updates:** publish supported geometry/material edits; Refresh Model explicitly exports a new revision.
 - **Model-focused controls:** optional hover highlighting and a collapsible toolbox.
 
-This transfers **3D scene data**, not a video of Blender’s viewport. PICO Connect, Unity, Blender MCP and an AI coding agent are **not required** to run the bridge. PICO Connect desktop mirroring has no verified emulator setup for this project.
+The base bridge transfers **3D scene data**. The optional render-window feature additionally streams Blender’s viewport video. PICO Connect, Unity, Blender MCP and an AI coding agent are **not required** to run the bridge. PICO Connect desktop mirroring has no verified emulator setup for this project.
 
 ## Dependencies
 

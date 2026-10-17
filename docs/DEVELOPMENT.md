@@ -54,6 +54,8 @@ For the add-on alone, use `python3 tools/package_release.py --addon-only`. ZIP c
 
 The APK is debug-signed using the build machine’s debug keystore. Prefer a release asset built once for all users; independently built debug APKs can have different signatures. See [installation troubleshooting](TROUBLESHOOTING.md).
 
+The render-window branch also emits `third-party-notices.zip`. Distribute it alongside the APK; it contains the WebRTC engine, packaging and bundled third-party notices. See [render-window setup](RENDER_WINDOW.md).
+
 ## Start a standalone emulator package
 
 Download the matching ZIP linked from the README and extract the complete archive to a writable directory. Leave the package’s `picoemulator`, `platform-tools`, system images and configuration folders together.

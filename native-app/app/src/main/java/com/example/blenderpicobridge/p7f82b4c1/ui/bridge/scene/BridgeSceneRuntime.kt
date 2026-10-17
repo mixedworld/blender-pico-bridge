@@ -33,7 +33,8 @@ import kotlin.math.max
 import kotlin.math.sqrt
 
 /** Main-thread scene owner. Authored transforms never overwrite the inspection carrier. */
-class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val room: Boolean = false) {
+class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val room: Boolean = false,
+    private val receiveRenderVideo: com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase? = null) {
     val placementOwner = Entity()
     val inspectionCarrier = Entity()
     private var fittedSceneRoot = Entity()
@@ -52,6 +53,11 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private var reservedRadius = 0f
     private val grabBounds = Entity()
     private var monitor: MonitorThreshold? = null
+    private var renderWindow: RenderWindowScene?=null
+    private var renderState=RenderWindowState()
+    private var headPosition: Vector3?=null
+    private var headRotation: Quat?=null
+    private var renderProjectionValid=true
     private var monitorHandles: MonitorHandles? = null
     private var manualHandles=false
     private var modelPickingSuspended=false
@@ -100,6 +106,10 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
 
     /** Place once from a valid tracked viewer; afterwards the scene stays world locked. */
     fun placeForViewer(position: Vector3, rotation: Quat) {
+        if(room) {
+            headPosition=position;headRotation=rotation
+            renderWindow?.ensurePlaced(calibration,position,rotation)
+        }
         if (!room || viewerPlaced || content == null) return
         viewerPlaced = true
         homePosition = placementOwner.convertPositionFrom(position + rotation.rotateVector(Vector3(0f, -.2f, -1.5f)), null)
@@ -118,20 +128,36 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
 
     /** Screen-aligned view in the exported model's coordinate frame; Entity conversions run on main. */
     fun trackView(headPosition: Vector3) {
-        if(!room || !linkedViewport || model==null || !calibration.enabled || !calibration.locked) return
+        if(!room || !linkedViewport || model==null) return
+        val remote=renderState.enabled && renderState.mode==RenderWindowMode.SCENE_ALIGNED
+        if(!remote && (!calibration.enabled || !calibration.locked))return
         val now=SystemClock.elapsedRealtime()
         if(now-lastCameraFrameAt<11) return
         lastCameraFrameAt=now
-        val screen=monitor?.anchor ?: return
+        val screen=if(remote) renderWindow?.anchor ?: return else monitor?.anchor ?: return
         try {
             val eye=screen.convertPositionFrom(headPosition,null)
             val position=fittedSceneRoot.convertPositionFrom(headPosition,null)
             val rotation=fittedSceneRoot.convertRotationFrom(screen.convertRotationTo(Quat(),null),null)
             val scale=fittedSceneRoot.convertScaleTo(Vector3(1f,1f,1f),null)
             require(scale.x>0 && abs(scale.y-scale.x)<scale.x*.001f && abs(scale.z-scale.x)<scale.x*.001f)
-            val frame=BuildMonitorCameraUseCase()(eye.values(),position.values(),rotation.values(),scale.x,calibration,hideSource)
+            val frame=if(remote) {
+                val screenScale=screen.convertScaleTo(Vector3(1f,1f,1f),null).x
+                com.example.blenderpicobridge.p7f82b4c1.domain.usecase.BuildRenderCameraUseCase()(
+                    (eye*screenScale).values(),position.values(),rotation.values(),scale.x,.9f*screenScale,
+                    renderState.aspect,latest?.renderCrop ?: listOf(0f,0f,1f,1f))
+            } else BuildMonitorCameraUseCase()(eye.values(),position.values(),rotation.values(),scale.x,calibration,hideSource)
+            if(remote) {
+                renderWindow?.setProjectionValid(true)
+                if(!renderProjectionValid) { renderProjectionValid=true;event(BridgeUiEvent.RenderProjection(true)) }
+            }
             event(BridgeUiEvent.TrackedCameraFrame(frame))
         } catch(_: IllegalArgumentException) {
+            if(remote) {
+                renderWindow?.setProjectionValid(false)
+                if(renderProjectionValid) { renderProjectionValid=false;event(BridgeUiEvent.RenderProjection(false)) }
+                return
+            }
             event(BridgeUiEvent.LinkViewport(false))
             event(BridgeUiEvent.Feedback("Camera sync stopped. Stand in front of the locked monitor; use uniform model scale."))
         }
@@ -389,6 +415,10 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             Log.i("BlenderBridge", "HAND_REBASE skipped discontinuous or transition sample")
             return
         }
+        if(renderWindow?.owns(target)==true) {
+            renderWindow?.manipulate(moved-origin,rotation,value.scaleValue)
+            return
+        }
         if (value.targetEntity == tools) {
             tools?.components?.get(TransformComponent::class.java)?.apply { position = position + moved - origin; quaternion = rotation * quaternion }
             return
@@ -439,6 +469,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
 
     fun accepts(entity: Entity): Boolean {
         if (entity == tools) return true
+        if(renderWindow?.owns(entity)==true)return true
         if(monitorHandles?.index(entity)!=null) return true
         if (monitor?.owns(entity)==true) return calibration.editing && !manualHandles
         if(calibration.editing && manualHandles) return false
@@ -448,6 +479,15 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     }
 
     fun preferences(feed: SceneFeed) {
+        renderState=feed.renderWindow
+        if(room && receiveRenderVideo!=null && renderState.enabled) {
+            if(renderWindow==null || kotlin.math.abs(renderWindow!!.aspect-renderState.aspect)>.001f) {
+                val pose=renderWindow?.pose();renderWindow?.close()
+                renderWindow=RenderWindowScene(placementOwner,renderState.aspect,receiveRenderVideo) { event(BridgeUiEvent.RenderStatus(it)) }
+                pose?.let { renderWindow?.restore(it) }
+            }
+        }
+        renderWindow?.update(renderState,feed.renderPairing,feed.monitor,headPosition,headRotation)
         if (feed.linkViewport != linkedViewport && model != null) {
             linkedViewport = feed.linkViewport
             if (linkedViewport) {
@@ -461,7 +501,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             if (hover) inspectionCarrier.components.set(HoverEffectComponent())
             else inspectionCarrier.components.remove(HoverEffectComponent::class.java)
         }
-        hideSource = feed.hideSource && !feed.monitor.editing && (room || !linkedViewport)
+        hideSource = feed.hideSource && !feed.monitor.editing && !feed.renderWindow.enabled && (room || !linkedViewport)
         calibration = feed.monitor
         setModelPickingSuspended(room && calibration.editing)
         manualHandles=room && feed.monitorHandles!=null && calibration.editing && !calibration.locked
@@ -505,7 +545,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
                 SceneCommand.NONE -> Unit
             }
         }
-        if (linkedViewport && room && stagedPose==null && calibration.enabled && calibration.locked && model!=null) stageTake()
+        if (linkedViewport && room && !feed.renderWindow.enabled && stagedPose==null && calibration.enabled && calibration.locked && model!=null) stageTake()
         if (linkedViewport && !room) latest?.let { packet ->
             val view = packet.viewport
             val source = linkedSnapshot
@@ -626,7 +666,13 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         Log.i("BlenderBridge", "GRAB_BOUNDS owner=inspectionCarrier center=${bounds.center} size=${bounds.halfExtent * 2f}")
     }
 
+    fun setRenderActive(active: Boolean) {
+        renderWindow?.setActive(active)
+        if(!active && renderState.enabled) event(BridgeUiEvent.RenderStatus(RenderVideoStatus("Render paused while app is hidden")))
+    }
+
     fun close() {
+        renderWindow?.close();renderWindow=null
         if (model != null) savePose()
         monitorHandles?.close();monitorHandles=null
         monitor?.close(); monitor = null

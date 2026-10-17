@@ -64,7 +64,7 @@ def main():
         validate_apk(args.apk, token)
     addon_zip = args.output / f"pico_blender_bridge-{version()}.zip"
     sources = [(ADDON / name, f"pico_blender_bridge/{name}") for name in
-               ("__init__.py", "glb.py", "server.py", "pairing.py", "qrcodegen.py", "calibration.py", "display.py", "tracked_camera.py", "source_visibility.py")]
+               ("__init__.py", "glb.py", "server.py", "pairing.py", "qrcodegen.py", "calibration.py", "display.py", "tracked_camera.py", "source_visibility.py", "render_stream.py", "render_publisher.html")]
     sources.append((ROOT / "LICENSE", "pico_blender_bridge/LICENSE"))
     with zipfile.ZipFile(addon_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path, name in sources:
@@ -80,6 +80,17 @@ def main():
         if args.apk.resolve() != target.resolve():
             shutil.copy2(args.apk, target)
         outputs.append(target)
+        notices = args.output / "third-party-notices.zip"
+        notice_sources = [ROOT / "THIRD_PARTY_NOTICES.md", ROOT / "LICENSE"] + sorted((ROOT / "LICENSES").glob("*"))
+        with zipfile.ZipFile(notices, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in notice_sources:
+                data = path.read_bytes()
+                validate_payload(data, path.name, token)
+                info = zipfile.ZipInfo(path.relative_to(ROOT).as_posix(), (1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o100644 << 16
+                archive.writestr(info, data)
+        outputs.append(notices)
     checksum = args.output / "SHA256SUMS"
     checksum.write_text("".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in outputs), encoding="utf-8")
     for path in outputs + [checksum]:

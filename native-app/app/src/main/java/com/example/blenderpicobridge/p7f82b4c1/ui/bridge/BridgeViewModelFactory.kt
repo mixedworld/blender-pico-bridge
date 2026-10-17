@@ -6,12 +6,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.example.blenderpicobridge.p7f82b4c1.data.repository.HttpBridgeRepository
 import com.example.blenderpicobridge.p7f82b4c1.data.repository.SpatialCameraRepository
+import com.example.blenderpicobridge.p7f82b4c1.data.repository.WebRtcRenderRepository
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ConnectBridgeUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ScanCameraUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.MarkerSettings
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.InspectionMode
 
 class BridgeViewModelFactory(context: Context) : ViewModelProvider.Factory {
+    private val appContext=context.applicationContext
     private val camera = SpatialCameraRepository(context.applicationContext)
     private val repository = HttpBridgeRepository(context.applicationContext)
     private val preview = context.getSharedPreferences("inspection-preview", Context.MODE_PRIVATE)
@@ -31,6 +34,7 @@ class BridgeViewModelFactory(context: Context) : ViewModelProvider.Factory {
             MarkerSettings(options.getFloat("markerSideMm",50f).takeIf { it.isFinite() && it in 10f..200f } ?: 50f,
                 options.getFloat("monitorCurveDegrees",0f).takeIf { it.isFinite() && it in 0f..120f } ?: 0f,
                 options.getBoolean("markerSideConfirmed",false)),
-            { value -> options.edit().putFloat("markerSideMm",value.sideMm).putFloat("monitorCurveDegrees",value.curveDegrees).putBoolean("markerSideConfirmed",value.confirmed).apply() }) as T
+            { value -> options.edit().putFloat("markerSideMm",value.sideMm).putFloat("monitorCurveDegrees",value.curveDegrees).putBoolean("markerSideConfirmed",value.confirmed).apply() },
+            ReceiveRenderVideoUseCase(WebRtcRenderRepository(appContext))) as T
     }
 }

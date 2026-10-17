@@ -10,6 +10,8 @@ data class BridgeUiState(
     val sourceHidden: Boolean = false, val hideSource: Boolean = true, val hover: Boolean = false, val collapsed: Boolean = false, val connectionPanel: Boolean = false,
     val room: Boolean = false, val autoRoom: Boolean = false, val enteringRoom: Boolean = false,
     val monitor: MonitorCalibration = MonitorCalibration(),
+    val renderWindow: RenderWindowState=RenderWindowState(),val renderStatus: String="Off",val renderStreaming: Boolean=false,
+    val renderAvailable: Boolean=false,
     val handleError: String? = null,
     val mode: InspectionMode = InspectionMode.SCALE, val explosion: Float = 0f, val partCount: Int = 0,
     val scanPurpose: ScanPurpose? = null, val scanRequest: Int = 0, val scanStatus: String = "",
@@ -65,6 +67,12 @@ sealed interface BridgeUiEvent {
     data object Fit : BridgeUiEvent
     data object SourceSize : BridgeUiEvent
     data class MonitorHandleMoved(val index: Int,val delta: List<Float>) : BridgeUiEvent
+    data class RenderEnabled(val enabled: Boolean): BridgeUiEvent
+    data class RenderMode(val mode: RenderWindowMode): BridgeUiEvent
+    data class RenderStatus(val value: RenderVideoStatus): BridgeUiEvent
+    data class RenderProjection(val valid: Boolean): BridgeUiEvent
+    data object RecenterRender : BridgeUiEvent
+    data object RetryRender : BridgeUiEvent
     data object AlignMonitor : BridgeUiEvent
     data object LockMonitor : BridgeUiEvent
     data object AlignmentLocating : BridgeUiEvent
