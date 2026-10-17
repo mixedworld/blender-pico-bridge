@@ -8,15 +8,9 @@ This feature is on `feature/cycles-render-window`. Build the add-on and APK from
 
 ## Start here
 
-1. **Open Blender and your scene.** Move the pointer over its 3D Viewport, press **N**, and choose **PICO Bridge**. Set **Source → Visible Scene** or choose a collection. Click **Start Bridge** if it is not running.
-2. **Connect the PICO app to Blender** using the usual Connection panel or pairing QR. For a physical headset, put it and the computer on the same reachable LAN. USB reverse forwarding can carry pairing/signaling, but does not forward WebRTC’s video transport.
-3. **Choose rendered shading in Blender.** Cycles is optional; the stream shows whatever the chosen viewport actually displays. Leave the Blender window open and keep its layout stable while testing.
-4. **In Blender’s PICO Bridge panel, click Share render window.** This opens a local sharing page in your default browser. Chrome on macOS is the tested capture route. If another default browser opens, open the same private link in Chrome; do not share the link or its pairing fragment publicly.
-5. **On that page, click Share Blender window.** Select the **Blender window** in Chrome’s chooser and click **Share**. Audio is off. On macOS, the first use may require enabling Chrome under **System Settings → Privacy & Security → Screen & System Audio Recording**, then relaunching Chrome and repeating this step. Keep the sharing page open.
-6. **In PICO, enter Room and open Tools.** Scroll to **Render window**, then enable **Show render window**. Wait for **Live render**. The sharing page should say **Streaming to PICO**.
-7. **Grab the window to move or rotate it.** Use two hands to resize it. Its aspect ratio stays fixed, and its width is limited to 0.35–1.8 metres. **Recenter window** places it in front of you while preserving its size and selected mode.
+Use the [direct Blender streaming setup](DIRECT_STREAMING.md): install the optional render worker once, open Blender's PICO Bridge panel, click **Start viewport stream**, pair the emulator/app and enable **Tools → Render window → Show render window**. Choose Cycles, Eevee or Workbench in Blender, or select Solid, Material Preview or Wireframe under **Stream appearance**. The encoder reads GPU pixels directly, with a transparent world background; Chrome capture is no longer the default.
 
-When an existing physical viewport frame is locked, the new virtual window starts near that frame, offset toward you. Otherwise it starts in front of your head. Moving this window does not move or overwrite your saved physical frame, corners or curvature.
+Grab the window’s **border or corners** to move or rotate it; start both hands on the border to resize (0.35–1.8 m). The image centre always passes grabs through to the native model, including when **Show 3D model** is off. In **Tools → Render window**, enable **Lock render window** to disable all frame grabbing, including its border. Unlock it to reposition it. Locking only changes interaction; video and Scene-aligned camera sync continue. Recenter places it in front of you. It remains independent of the saved physical viewport frame and curvature.
 
 ## Try both modes
 
@@ -31,19 +25,23 @@ The native **Scale / Explode** selection continues to control model manipulation
 
 ## Stop and recover
 
-- **Turn off Show render window** to remove it and release its camera link. Use **Stop sharing** in the browser to end screen capture as well. Closing that page also ends capture.
-- **No video:** check the browser preview, keep the page open, and verify both devices can reach each other on the LAN. After restarting sharing, use **Retry stream** in PICO.
-- **Wrong content:** stop sharing, then select the Blender window again. The add-on crops its selected 3D viewport; it does not stream the whole desktop.
-- **View unavailable:** stand in front of the window and face it. A scene-aligned image is hidden when its perspective is invalid; the frame remains movable. Use Recenter if needed.
-- **Video paused/disconnected:** camera control is released while fresh video is unavailable. A temporary frame stall can recover automatically; after a stopped share, use Retry stream.
-- **Layout changed:** resizing panels changes the capture crop and may recreate the video surface while retaining the virtual window pose. Keep the viewport layout steady for an aligned take.
+- Turn off **Show render window** to release its camera link, and click **Stop viewport stream** in Blender to stop capture/encoding and restore temporary settings.
+- For no video, check Blender's bridge status and render-worker setup. Keep the target 3D viewport open. Brief capture pauses repeat the last image; dropped connections retry automatically. Use **Retry stream** if manual recovery is needed.
+- For unexpected background geometry, use a model collection in Cycles. Eevee currently includes visible scene geometry; see the isolation limitations in the direct-stream guide.
+- **Model disappears after Stage for take:** staging scales the native model to fit wholly behind the locked physical viewport mask. It remains hidden there until you pinch through the frame and pull it in front. The larger source-size model can extend beyond the mask, making this look like distance culling. The independent video window also obeys scene depth: move it in front of the physical viewport frame if it has been placed behind it.
+- For **View unavailable**, stand in front of the window and face it. The image hides when perspective is invalid; its frame remains movable. Use Recenter if needed.
+- Resizing the Blender viewport updates the linked camera without resetting it; closing or replacing that viewport ends its link. Mono cannot match both eyes exactly. Optional [Stereo with manual eye separation](STEREO_STREAMING.md) adds binocular parallax; it still does not provide per-pixel scene depth.
 
-## Transport, dependencies and limits
+## Transport and verification
 
-The add-on hosts the local capture page and authenticated, bounded offer/answer signaling. Chrome captures the selected window, crops out Blender’s editor chrome, and sends video directly over WebRTC. The Android app uses [WebRTC Android 150.7871.01](https://github.com/webrtc-sdk/android) and a public PICO `SurfaceRenderTexture`/`VideoComponent`. No external signaling, STUN or TURN server is configured. The local pairing token stays private; audio and headset camera capture are not used by this feature.
+The current path is Blender RGBA → local aiortc/PyAV worker → VP8 WebRTC colour/alpha atlas → native GPU unpack → transparent PICO VideoMaterial. See [architecture, dependencies, evidence and remaining limits](DIRECT_STREAMING.md).
 
-The capture targets **30 fps**, with the longest output side capped at **1280 pixels**. This is a monoscopic rectangular image, not a stereo render or a transparent depth-composited portal. A single image cannot match both eyes exactly. Network/capture latency and Cycles convergence can expose seams during motion. Curved physical-frame camera matching remains a chord approximation; the movable render window itself is flat. Its pose is retained during the current Room session, not saved as a new persistent anchor.
+The earlier opaque Chrome publisher remains in the source as a compatibility tool. Its real-headset video/movement/reconnect tests predate direct RGBA capture and must not be treated as physical verification of the new path. Original bridge MIT terms do not relicense dependencies; see [third-party notices](../THIRD_PARTY_NOTICES.md).
 
-On the tested Mac and real PICO, the user confirmed live video, one-hand movement, two-hand resizing and both mode toggles. A short receiver sample reported approximately **28–29 fps**. An intermittent reconnect failure was traced to a native network candidate arriving after the gather-complete callback. Incremental ICE forwarding fixes that race; an opt-in device test passed three successive receiver open/decode-to-surface/close cycles (about six seconds total). The user then confirmed live video returned in the reopened production Room window with the corrected build. Stopping Mac sharing released camera control and restored Blender's overlay/gizmo settings with the source visible. This does not measure end-to-end latency or establish sustained performance. Windows and emulator video runtime have not been verified.
+The emulator distance-visibility check was confirmed interactively: after pinching through the locked viewport frame and pulling the staged model in front, the user could move farther away without it disappearing. No camera-culling adjustment was needed.
 
-Source checks: managed Kotlin scene build, 111 JVM tests and 27 Python tests pass. The whole-app design validation remains non-clean: its existing implementation mapping is stale, and a scanner rejected wildcard SDK imports before they were replaced. No global visual-design certification is claimed. Third-party notices accompany packaged APKs in `third-party-notices.zip`; see [notices](../THIRD_PARTY_NOTICES.md).
+### Hide the native model while keeping control
+
+In PICO **Tools**, switch **Show 3D model** off to show only the streamed render. The native model stays loaded: grab its existing position to move, rotate, scale or explode it. Its hover highlight is suppressed while hidden. Turn the switch on to reveal it at its current pose. This does not hide the Blender source or the render window.
+
+The setting survives incoming scene updates for the current app session; a fresh app start defaults to showing the model.

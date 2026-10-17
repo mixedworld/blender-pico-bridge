@@ -76,6 +76,16 @@ class RenderStreamTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as error:self.request(candidate)
         self.assertEqual(409,error.exception.code)
 
+    def test_alpha_format_is_explicit_validated_and_lease_scoped(self):
+        body={"type":"publisher","width":640,"height":856,"format":"color-alpha-top-bottom-v1"}
+        self.request(body)
+        self.assertEqual("color-alpha-top-bottom-v1",self.request()["format"])
+        with self.assertRaises(urllib.error.HTTPError):self.request(dict(body,format="unknown"))
+        self.server.render_signaling.publisher_until=0
+        self.assertEqual("opaque",self.request()["format"])
+        self.request({"type":"publisher","width":640,"height":428})
+        self.assertEqual("opaque",self.request()["format"])
+
     def test_server_restart_closes_persistent_handlers(self):
         connection=http.client.HTTPConnection("127.0.0.1",self.server.port,timeout=1)
         connection.request("GET","/v1/render-stream",headers={"Authorization":"Bearer test-secret"})

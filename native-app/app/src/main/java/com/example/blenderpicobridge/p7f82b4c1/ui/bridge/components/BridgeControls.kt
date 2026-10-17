@@ -53,6 +53,10 @@ internal fun BridgeControls(state: BridgeUiState, event: (BridgeUiEvent) -> Unit
                     Action(if (state.room) "100% source" else "Fit preview", { event(if (state.room) BridgeUiEvent.SourceSize else BridgeUiEvent.Fit) }, Modifier.weight(1f), state.hasModel)
                     Action("Assemble", { event(BridgeUiEvent.ExplosionChanged(0f)) }, Modifier.weight(1f), state.hasModel)
                 }
+                ListItem(headlineContent = { Text("Show 3D model") },
+                    supportingContent = { Text("Grabbing and gestures stay active when hidden") },
+                    trailingContent = { Switch(checked = state.modelVisible,
+                        onCheckedChange = { event(BridgeUiEvent.ModelVisibilityChanged(it)) }) })
                 ListItem(headlineContent = { Text("Highlight on hover") }, trailingContent = {
                     Switch(checked = state.hover, onCheckedChange = { event(BridgeUiEvent.HoverChanged(it)) })
                 })

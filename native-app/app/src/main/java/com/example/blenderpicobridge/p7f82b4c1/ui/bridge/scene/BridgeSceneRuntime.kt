@@ -39,6 +39,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     val inspectionCarrier = Entity()
     private var fittedSceneRoot = Entity()
     private var model: Entity? = null
+    private val modelVisibility = NativeModelVisibility()
     private var content: SpatialViewContent? = null
     private var shape: ShapeResource? = null
     private var physics: PhysicsMaterialResource? = null
@@ -141,12 +142,27 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             val rotation=fittedSceneRoot.convertRotationFrom(screen.convertRotationTo(Quat(),null),null)
             val scale=fittedSceneRoot.convertScaleTo(Vector3(1f,1f,1f),null)
             require(scale.x>0 && abs(scale.y-scale.x)<scale.x*.001f && abs(scale.z-scale.x)<scale.x*.001f)
-            val frame=if(remote) {
+            var frame=if(remote) {
                 val screenScale=screen.convertScaleTo(Vector3(1f,1f,1f),null).x
                 com.example.blenderpicobridge.p7f82b4c1.domain.usecase.BuildRenderCameraUseCase()(
                     (eye*screenScale).values(),position.values(),rotation.values(),scale.x,.9f*screenScale,
                     renderState.aspect,latest?.renderCrop ?: listOf(0f,0f,1f,1f))
             } else BuildMonitorCameraUseCase()(eye.values(),position.values(),rotation.values(),scale.x,calibration,hideSource)
+            if(remote && (latest?.renderStereoEyeSeparationMm ?: 0f)>0f) {
+                // Manual symmetric rig in tracked HMD-local metres, not the screen's local X.
+                // Convert each eye through public Entity APIs before building its off-axis frustum.
+                val separation=latest!!.renderStereoEyeSeparationMm/1000f
+                val headQ=headRotation ?: return
+                val screenScale=screen.convertScaleTo(Vector3(1f,1f,1f),null).x
+                val eyes=listOf(-.5f,.5f).map { side ->
+                    val globalEye=headPosition+headQ.rotateVector(Vector3(side*separation,0f,0f))
+                    com.example.blenderpicobridge.p7f82b4c1.domain.usecase.BuildRenderCameraUseCase()(
+                        (screen.convertPositionFrom(globalEye,null)*screenScale).values(),
+                        fittedSceneRoot.convertPositionFrom(globalEye,null).values(),rotation.values(),scale.x,
+                        .9f*screenScale,renderState.aspect,latest!!.renderCrop)
+                }
+                frame=frame.copy(eyes=eyes)
+            }
             if(remote) {
                 renderWindow?.setProjectionValid(true)
                 if(!renderProjectionValid) { renderProjectionValid=true;event(BridgeUiEvent.RenderProjection(true)) }
@@ -301,6 +317,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             val previousControllers = controllers.toList()
             fittedSceneRoot = nextFit
             model = incoming
+            modelVisibility.bind(incoming)
             shape = nextShape
             nodes.clear(); nodes.putAll(nextNodes)
             controllers.clear(); controllers.addAll(nextControllers)
@@ -479,6 +496,8 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     }
 
     fun preferences(feed: SceneFeed) {
+        val seedRenderCamera=room && feed.linkViewport &&
+            (!linkedViewport || renderState!=feed.renderWindow)
         renderState=feed.renderWindow
         if(room && receiveRenderVideo!=null && renderState.enabled) {
             if(renderWindow==null || kotlin.math.abs(renderWindow!!.aspect-renderState.aspect)>.001f) {
@@ -496,8 +515,10 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             }
             else { if (!room && linkedRevision == revision) linkedSnapshot?.let(::restorePose); linkedSnapshot = null; linkedRevision = null }
         }
-        if (hover != feed.hover) {
-            hover = feed.hover
+        modelVisibility.setVisible(feed.modelVisible)
+        val showHover = feed.hover && feed.modelVisible
+        if (hover != showHover) {
+            hover = showHover
             if (hover) inspectionCarrier.components.set(HoverEffectComponent())
             else inspectionCarrier.components.remove(HoverEffectComponent::class.java)
         }
@@ -560,6 +581,9 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             }
         }
         updateSourceVisibility()
+        // A stationary emulator may emit no new HMD sample after enabling/recentering.
+        // Seed once from the last valid tracked pose; later motion retains the fast path.
+        if(seedRenderCamera && renderState.enabled && linkedViewport) headPosition?.let(::trackView)
     }
 
     private fun fit(scale: Float) {
@@ -664,6 +688,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         grabBounds.components.set(CollisionComponent(listOf(next), physics!!))
         shape?.close(); shape = next; collisionKey = key
         Log.i("BlenderBridge", "GRAB_BOUNDS owner=inspectionCarrier center=${bounds.center} size=${bounds.halfExtent * 2f}")
+
     }
 
     fun setRenderActive(active: Boolean) {
@@ -679,6 +704,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         controllers.forEach { it.stop(); it.close() }
         controllers.clear()
         content?.removeEntity(placementOwner)
+        modelVisibility.clear()
         placementOwner.destroy(true)
         shape?.close()
         physics?.close()

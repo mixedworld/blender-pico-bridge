@@ -7,6 +7,7 @@ data class BridgeUiState(
     val status: String = "Disconnected", val note: String = "Enter the bridge URL and pairing token to begin.",
     val frame: Int = 1, val revision: String = "—", val scale: Float = 1f, val playing: Boolean = false,
     val fitScale: Float = 1f,
+    val modelVisible: Boolean = true,
     val sourceHidden: Boolean = false, val hideSource: Boolean = true, val hover: Boolean = false, val collapsed: Boolean = false, val connectionPanel: Boolean = false,
     val room: Boolean = false, val autoRoom: Boolean = false, val enteringRoom: Boolean = false,
     val monitor: MonitorCalibration = MonitorCalibration(),
@@ -59,6 +60,7 @@ sealed interface BridgeUiEvent {
     data object Reset : BridgeUiEvent
     data class SourceHidingChanged(val enabled: Boolean) : BridgeUiEvent
     data class SourceHidden(val hidden: Boolean) : BridgeUiEvent
+    data class ModelVisibilityChanged(val visible: Boolean) : BridgeUiEvent
     data class HoverChanged(val enabled: Boolean) : BridgeUiEvent
     data class CollapseChanged(val collapsed: Boolean) : BridgeUiEvent
     data class ConnectionPanelChanged(val visible: Boolean) : BridgeUiEvent
@@ -68,6 +70,7 @@ sealed interface BridgeUiEvent {
     data object SourceSize : BridgeUiEvent
     data class MonitorHandleMoved(val index: Int,val delta: List<Float>) : BridgeUiEvent
     data class RenderEnabled(val enabled: Boolean): BridgeUiEvent
+    data class RenderLocked(val locked: Boolean): BridgeUiEvent
     data class RenderMode(val mode: RenderWindowMode): BridgeUiEvent
     data class RenderStatus(val value: RenderVideoStatus): BridgeUiEvent
     data class RenderProjection(val valid: Boolean): BridgeUiEvent

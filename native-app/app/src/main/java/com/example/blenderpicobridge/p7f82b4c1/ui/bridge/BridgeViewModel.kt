@@ -53,6 +53,15 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         previous?.cancel();pendingViewport=null;pendingCamera=null
         val packet=_scene.value.packet
         val headCamera=state.value.room
+        if(!enabled && !preserveRoomIntent && headCamera && state.value.renderWindow.enabled && renderEverLive && packet?.revision!=null) {
+            // A model handoff already canceled the old-revision sender. Explicit off
+            // must still release the held Blender camera using the current revision.
+            val pairing=Pairing(state.value.endpoint,state.value.token)
+            viewModelScope.launch {
+                previous?.join()
+                runCatching { connect.viewCamera(pairing,packet.session,packet.revision,java.util.UUID.randomUUID().toString(),1,null) }
+            }
+        }
         val capability=if(headCamera) packet?.cameraSyncVersion==1 && packet.cameraControlEnabled && ((state.value.monitor.enabled && state.value.monitor.locked) || state.value.renderWindow.enabled)
             else packet?.viewportControlEnabled==true
         val allowed=enabled && capability
@@ -67,6 +76,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             var missingFrames=0
             val stream=java.util.UUID.randomUUID().toString()
             var sequence=0L
+            var networkFailures=0
             try {
                 while(isActive) {
                     delay(if(headCamera) 11 else 75)
@@ -79,7 +89,13 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                         }
                         missingFrames=0
                         pendingCamera=null
-                        connect.viewCamera(pairing,packet.session,requireNotNull(packet.revision),stream,++sequence,frame)
+                        try {
+                            connect.viewCamera(pairing,packet.session,requireNotNull(packet.revision),stream,++sequence,frame)
+                            networkFailures=0
+                        } catch(error: java.io.IOException) {
+                            if(!state.value.renderWindow.enabled || ++networkFailures>8)throw error
+                            delay(250) // Blender's main-thread export can briefly delay HTTP.
+                        }
                     } else {
                         val delta=pendingViewport ?: continue
                         pendingViewport=null
@@ -146,6 +162,8 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
     }
     private var beforeRenderLink=false
     private var renderVideoMessage="Off"
+    private var renderRecovering=false
+    private var renderEverLive=false
     private fun renderWindow(value: RenderWindowState) {
         _state.update { it.copy(renderWindow=value) }
         _scene.update { it.copy(renderWindow=value,renderPairing=if(value.enabled) Pairing(state.value.endpoint,state.value.token) else null) }
@@ -154,13 +172,18 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         if(enabled && (!state.value.room || !state.value.hasModel || !state.value.renderAvailable)) return
         if(enabled==state.value.renderWindow.enabled)return
         if(enabled) { beforeRenderLink=state.value.linkViewport;linkViewport(false);sourceVisibility(false) }
+        else linkViewport(false)
+        renderRecovering=false;renderEverLive=false
         renderWindow(state.value.renderWindow.copy(enabled=enabled))
-        _state.update { it.copy(renderStreaming=false,renderStatus=if(enabled) "On Mac: Share render window → choose Blender" else "Off") }
+        _state.update { it.copy(renderStreaming=false,renderStatus=if(enabled) "In Blender: Start viewport stream" else "Off") }
         if(!enabled && beforeRenderLink && state.value.room) linkViewport(true)
     }
     private fun renderCamera() {
         val s=state.value
-        if(s.renderWindow.enabled) linkViewport(s.renderStreaming && s.renderWindow.mode==RenderWindowMode.SCENE_ALIGNED)
+        if(s.renderWindow.enabled) {
+            val desired=(s.renderStreaming || renderRecovering) && s.renderWindow.mode==RenderWindowMode.SCENE_ALIGNED
+            if(desired!=s.linkViewport || (!desired && renderEverLive))linkViewport(desired)
+        }
     }
     private var loadedRevision: String? = null
 
@@ -295,6 +318,10 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 if (!event.enabled) sourceVisibility(false)
             }
             is BridgeUiEvent.SourceHidden -> if (sourceHidden != event.hidden) sourceVisibility(event.hidden && state.value.hideSource && state.value.room && !state.value.renderWindow.enabled)
+            is BridgeUiEvent.ModelVisibilityChanged -> {
+                _state.update { it.copy(modelVisible = event.visible) }
+                _scene.update { it.copy(modelVisible = event.visible) }
+            }
             is BridgeUiEvent.HoverChanged -> { _state.update { it.copy(hover = event.enabled) }; _scene.update { it.copy(hover = event.enabled) } }
             is BridgeUiEvent.CollapseChanged -> { if (event.collapsed) { closeMarkers();cancelTouch() }; _state.update { it.copy(collapsed = event.collapsed) } }
             is BridgeUiEvent.ConnectionPanelChanged -> {
@@ -357,12 +384,16 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 _state.update { it.copy(scale = 1f, explosion = 0f) }
             }
             is BridgeUiEvent.RenderEnabled -> enableRender(event.enabled)
+            is BridgeUiEvent.RenderLocked -> renderWindow(state.value.renderWindow.copy(locked=event.locked))
             is BridgeUiEvent.RenderMode -> {
                 renderWindow(state.value.renderWindow.copy(mode=event.mode));renderCamera()
             }
             is BridgeUiEvent.RenderStatus -> if(state.value.renderWindow.enabled) {
                 renderVideoMessage=event.value.message
-                val changed=state.value.renderStreaming!=event.value.streaming
+                if(event.value.streaming)renderEverLive=true
+                val recovering=event.value.recovering && renderEverLive
+                val changed=state.value.renderStreaming!=event.value.streaming || renderRecovering!=recovering
+                renderRecovering=recovering
                 _state.update { it.copy(renderStatus=event.value.message,renderStreaming=event.value.streaming) }
                 if(changed)renderCamera()
             }
@@ -425,7 +456,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                         }
                     }
                     is BridgeUpdate.Frame -> {
-                        _state.update { it.copy(renderAvailable=update.packet.renderStreamVersion==1) }
+                        _state.update { it.copy(renderAvailable=update.packet.renderStreamVersion in 1..3) }
                         if(kotlin.math.abs(state.value.renderWindow.aspect-update.packet.renderAspect)>.001f)
                             renderWindow(state.value.renderWindow.copy(aspect=update.packet.renderAspect))
                         if (state.value.markerPhase!=MarkerPhase.NONE && markerBoard!=null && update.packet.board!=markerBoard) {

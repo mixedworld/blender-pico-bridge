@@ -3,17 +3,13 @@ package com.example.blenderpicobridge.p7f82b4c1.ui.bridge.scene
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.*
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.CurvedScreenUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase
-import com.pico.spatial.core.ecs.CollisionComponent
 import com.pico.spatial.core.ecs.Entity
-import com.pico.spatial.core.ecs.InteractableComponent
 import com.pico.spatial.core.ecs.ModelComponent
 import com.pico.spatial.core.ecs.TransformComponent
 import com.pico.spatial.core.ecs.VideoComponent
 import com.pico.spatial.core.ecs.resource.BlendingMode
 import com.pico.spatial.core.ecs.resource.MaterialCullingMode
 import com.pico.spatial.core.ecs.resource.MeshResource
-import com.pico.spatial.core.ecs.resource.PhysicsMaterialResource
-import com.pico.spatial.core.ecs.resource.ShapeResource
 import com.pico.spatial.core.ecs.resource.SurfaceRenderTexture
 import com.pico.spatial.core.ecs.resource.UnlitMaterial
 import com.pico.spatial.core.ecs.resource.VideoMaterial
@@ -28,20 +24,19 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
     private val receive: ReceiveRenderVideoUseCase,private val status: (RenderVideoStatus)->Unit): AutoCloseable {
     val anchor=Entity()
     private val video=Entity()
-    private val proxy=Entity()
     private val bars=List(4) { Entity() }
     private val width=.9f
     private val height=width/aspect
     private val mesh=MeshResource.createPlane(1f,1f).sceneOwned()
     private val barMesh=MeshResource.createBox(Vector3(1f,1f,1f)).sceneOwned()
     private val border=UnlitMaterial.create().apply { setBaseColor(Color4(.34f,.38f,.42f,1f)) }.sceneOwned()
-    private val texture=SurfaceRenderTexture(1280,(1280/aspect).toInt().coerceIn(128,4096),3).sceneOwned()
-    private val material=VideoMaterial(BlendingMode.OPAQUE,VideoDimensionMode.MONO,MaterialCullingMode.BACK,Color4.BLACK).apply {
-        bindSurfaceRenderTexture(texture);setDepthTest(true);setDepthWrite(true)
+    private val texture=SurfaceRenderTexture(2560,(1280/aspect).toInt().coerceIn(128,4096),3).sceneOwned()
+    private val material=VideoMaterial(BlendingMode.TRANSPARENT,VideoDimensionMode.MONO,MaterialCullingMode.BACK,Color4.TRANSPARENT).apply {
+        bindSurfaceRenderTexture(texture);setDepthTest(true);setDepthWrite(false)
     }.sceneOwned()
     private val surface=requireNotNull(texture.acquireSurface()) { "Video surface unavailable" }
-    private val shape=ShapeResource.createBox(Vector3(width,height,.012f)).sceneOwned()
-    private val physics=PhysicsMaterialResource().sceneOwned()
+    private val picking=RenderFramePicking(anchor,width,height)
+    private var locked=false
     private var receiver: AutoCloseable?=null
     private var pairing: Pairing?=null
     private var enabled=false
@@ -60,8 +55,6 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
         anchor.addChild(video);video.setName("cyclesRenderVideo")
         video.components.set(VideoComponent(mesh,material));video.enabled=false
         video.components[TransformComponent::class.java]!!.scaleVector=Vector3(width,height,1f)
-        anchor.addChild(proxy);proxy.setName("cyclesRenderGrab")
-        proxy.components.set(InteractableComponent());proxy.components.set(CollisionComponent(listOf(shape),physics))
         bars.forEachIndexed { i,bar ->
             anchor.addChild(bar);bar.components.set(ModelComponent(barMesh,border))
             bar.components[TransformComponent::class.java]!!.apply {
@@ -76,8 +69,10 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
         val restart=retry!=state.retry || pairing!=nextPairing
         reset=state.reset;retry=state.retry;pairing=nextPairing
         enabled=state.enabled
+        locked=state.locked
         if(state.mode==RenderWindowMode.LIVE_DISPLAY) setProjectionValid(true)
         anchor.enabled=enabled && active && initialized
+        updatePicking()
         if(!enabled || !active) stopReceiver()
         else if(receiver==null || restart) { stopReceiver();startReceiver() }
     }
@@ -85,6 +80,7 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
         val pair=pairing ?: return
         receiver=receive(surface,pair,aspect) { update ->
             if(!closed && enabled && active) {
+                if(update.streaming) material.setDimensionMode(if(update.stereo) VideoDimensionMode.SIDE_BY_SIDE else VideoDimensionMode.MONO)
                 streaming=update.streaming;video.enabled=streaming && projectionValid
                 status(update)
             }
@@ -95,6 +91,7 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
     fun setActive(value: Boolean) {
         if(active==value)return
         active=value;anchor.enabled=enabled && active && initialized
+        updatePicking()
         if(!active)stopReceiver() else if(enabled)startReceiver()
     }
     fun place(calibration: MonitorCalibration,head: Vector3?,rotation: Quat?,useMonitor: Boolean) {
@@ -109,6 +106,7 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
             transform.quaternion=owner.convertRotationFrom(rotation,null)
         }
         initialized=true;anchor.enabled=enabled && active
+        updatePicking()
     }
     fun ensurePlaced(calibration: MonitorCalibration,head: Vector3,rotation: Quat) {
         if(!initialized)place(calibration,head,rotation,true)
@@ -117,13 +115,10 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
     fun restore(pose: Triple<Vector3,Quat,Float>) {
         transform.position=pose.first;transform.quaternion=pose.second;transform.scaleVector=Vector3(pose.third,pose.third,pose.third);initialized=true
     }
-    fun owns(entity: Entity): Boolean {
-        if(!anchor.enabled)return false
-        var current: Entity?=entity
-        while(current!=null) { if(current==anchor)return true;current=current.getParent() }
-        return false
-    }
+    private fun updatePicking() = picking.setInteractive(anchor.enabled && !locked && !closed)
+    fun owns(entity: Entity) = anchor.enabled && !locked && picking.owns(entity)
     fun manipulate(delta: Vector3,rotation: Quat,scale: Float) {
+        if(locked || !anchor.enabled || closed)return
         transform.position=transform.position+delta
         val q=rotation*transform.quaternion
         val n=sqrt(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w)
@@ -134,7 +129,7 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
     override fun close() {
         if(closed)return
         closed=true;stopReceiver() // EglRenderer/decoder must release their borrowed Surface first.
-        anchor.destroy(true);surface.release();material.close();texture.close()
-        mesh.close();barMesh.close();border.close();shape.close();physics.close()
+        picking.close();anchor.destroy(true);surface.release();material.close();texture.close()
+        mesh.close();barMesh.close();border.close()
     }
 }

@@ -18,6 +18,28 @@ class BridgeViewModelTest {
         model = BridgeViewModel(repository.pairing, ConnectBridgeUseCase(repository))
     }
     @After fun finish() { model.onEvent(BridgeUiEvent.Disconnect); Dispatchers.resetMain() }
+    @Test fun hidingNativeModelSurvivesUpdatesWithoutChangingInteractionOrVideo() = runTest(dispatcher) {
+        model.onEvent(BridgeUiEvent.Connect); runCurrent()
+        val packet = FramePacket("session", 4, "a".repeat(64), null, "Robot", 60, false, 2f, emptyList(), null, 1, 1)
+        repository.events.emit(BridgeUpdate.Model(packet, File("model.glb"))); runCurrent()
+        model.onEvent(BridgeUiEvent.ModelReady(packet.revision!!, .1f))
+        model.onEvent(BridgeUiEvent.HoverChanged(true))
+        val before = model.scene.value
+        assertTrue(model.state.value.modelVisible)
+        model.onEvent(BridgeUiEvent.ModelVisibilityChanged(false))
+        assertFalse(model.state.value.modelVisible)
+        assertEquals(before.copy(modelVisible = false), model.scene.value)
+        model.onEvent(BridgeUiEvent.ModeChanged(InspectionMode.EXPLODE))
+        model.onEvent(BridgeUiEvent.ExplosionChanged(.4f))
+        repository.events.emit(BridgeUpdate.Frame(packet.copy(sequence = 5, frame = 61))); runCurrent()
+        repository.events.emit(BridgeUpdate.Model(packet.copy(sequence = 6, revision = "b".repeat(64)), File("updated.glb"))); runCurrent()
+        assertFalse(model.scene.value.modelVisible)
+        assertEquals(.4f, model.scene.value.explosion, .0001f)
+        val hidden = model.scene.value
+        model.onEvent(BridgeUiEvent.ModelVisibilityChanged(true))
+        assertTrue(model.state.value.modelVisible)
+        assertEquals(hidden.copy(modelVisible = true), model.scene.value)
+    }
     @Test fun initLoadsSavedPairingWithoutClaimingConnected() {
         assertEquals(repository.pairing.endpoint, model.state.value.endpoint)
         assertEquals("disconnected", model.state.value.phase)

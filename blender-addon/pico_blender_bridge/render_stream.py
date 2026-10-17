@@ -11,6 +11,7 @@ class RenderSignaling:
         self.viewer_until = 0.0
         self.publisher_until = 0.0
         self.publisher_size = [0, 0]
+        self.publisher_format = "opaque"
         self.candidates = {"viewer": [], "publisher": []}
 
     def state(self):
@@ -20,6 +21,7 @@ class RenderSignaling:
             self.candidates = {"viewer": [], "publisher": []}
         return {"stream": self.stream, "offer": self.offer, "answer": self.answer,
                 "publisherReady": self.publisher_until > now, "size": self.publisher_size,
+                "format": self.publisher_format if self.publisher_until > now else "opaque",
                 "viewerCandidates": list(self.candidates["viewer"]), "publisherCandidates": list(self.candidates["publisher"])}
 
     def command(self, body):
@@ -30,8 +32,11 @@ class RenderSignaling:
                     "viewer": {"type", "stream"}, "publisher": {"type", "width", "height"},
                     "ice": {"type", "stream", "side", "candidate", "mid", "index"},
                     "stop": {"type", "stream"}, "unpublish": {"type"}}
-        if not isinstance(kind,str) or kind not in required or set(body) != required[kind]:
+        extra = {"format"} if kind == "publisher" and "format" in body else set()
+        if not isinstance(kind,str) or kind not in required or set(body) != required[kind] | extra:
             raise ValueError("Unknown signaling command")
+        if kind == "publisher" and body.get("format", "opaque") not in ("opaque", "color-alpha-top-bottom-v1", "stereo-sbs-color-alpha-top-bottom-v1"):
+            raise ValueError("Unsupported publisher format")
         if "stream" in body and (not isinstance(body["stream"], str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", body["stream"])):
             raise ValueError("Invalid stream ID")
         if "sdp" in body and (not isinstance(body["sdp"], str) or not 1 <= len(body["sdp"]) <= 262144 or not body["sdp"].startswith("v=0")):
@@ -73,6 +78,7 @@ class RenderSignaling:
         elif kind == "publisher":
             self.publisher_until = now + 12
             self.publisher_size = [body["width"], body["height"]]
+            self.publisher_format = body.get("format", "opaque")
         elif kind == "stop":
             if self.stream == body["stream"]:
                 self.stream = self.offer = self.answer = None
