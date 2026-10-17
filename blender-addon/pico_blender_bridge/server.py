@@ -9,6 +9,15 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+from pathlib import Path
+try:
+    from .render_stream import RenderSignaling
+except ImportError:
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("bridge_render_stream", Path(__file__).with_name("render_stream.py"))
+    _module = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_module)
+    RenderSignaling = _module.RenderSignaling
 
 
 class BridgeServer:
@@ -16,9 +25,11 @@ class BridgeServer:
         self.token = token or secrets.token_urlsafe(24)
         self.session = secrets.token_hex(12)
         self.lock = threading.Lock()
+        self.connections = set()
         self.state = {"protocol": 1, "session": self.session, "sequence": 0,
                       "revision": None, "playing": False, "error": "Export a model first"}
         self.models = {}
+        self.render_signaling = RenderSignaling()
         self.last_client = 0.0
         self.visibility_hidden = False
         self.visibility_expires = 0.0
@@ -37,11 +48,24 @@ class BridgeServer:
             def setup(self):
                 super().setup()
                 self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                with owner.lock:
+                    owner.connections.add(self.connection)
+
+            def finish(self):
+                try:
+                    super().finish()
+                finally:
+                    with owner.lock:
+                        owner.connections.discard(self.connection)
 
             def log_message(self, *_):
                 pass
 
             def do_GET(self):
+                path = urlsplit(self.path).path
+                if path == "/render" and self.client_address[0] in ("127.0.0.1", "::1"):
+                    self.respond(200, Path(__file__).with_name("render_publisher.html").read_bytes(), "text/html; charset=utf-8")
+                    return
                 supplied = self.headers.get("Authorization", "")
                 if not hmac.compare_digest(supplied, "Bearer " + owner.token):
                     self.respond(401, b'{"error":"Pairing token required"}', "application/json")
@@ -49,7 +73,10 @@ class BridgeServer:
                 path = urlsplit(self.path).path
                 with owner.lock:
                     owner.last_client = time.monotonic()
-                    if path == "/v1/state":
+                    if path == "/v1/render-stream":
+                        data = json.dumps({**owner.render_signaling.state(), "capture": owner.state.get("captureViewport")}, separators=(",", ":")).encode()
+                        mime = "application/json"
+                    elif path == "/v1/state":
                         data = json.dumps(owner.state, separators=(",", ":")).encode()
                         mime = "application/json"
                     elif path.startswith("/v1/models/") and path.endswith(".glb"):
@@ -67,14 +94,20 @@ class BridgeServer:
                     self.respond(401, b'{"error":"Pairing token required"}', "application/json")
                     return
                 path = urlsplit(self.path).path
-                if path not in ("/v1/source-visibility", "/v1/viewport-delta", "/v1/view-camera"):
+                if path not in ("/v1/source-visibility", "/v1/viewport-delta", "/v1/view-camera", "/v1/render-stream"):
                     self.respond(404, b'{"error":"Not found"}', "application/json")
                     return
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < length <= (2048 if path in ("/v1/viewport-delta", "/v1/view-camera") else 64):
+                    limit = 300000 if path == "/v1/render-stream" else (2048 if path in ("/v1/viewport-delta", "/v1/view-camera") else 64)
+                    if not 0 < length <= limit:
                         raise ValueError("Invalid body size")
                     body = json.loads(self.rfile.read(length))
+                    if path == "/v1/render-stream":
+                        with owner.lock:
+                            accepted = owner.render_signaling.command(body)
+                        self.respond(202 if accepted else 409, b'{"ok":true}' if accepted else b'{"error":"Another render stream is active"}', "application/json")
+                        return
                     if path == "/v1/view-camera":
                         owner.validate_view_camera(body)
                         with owner.lock:
@@ -249,5 +282,15 @@ class BridgeServer:
 
     def close(self):
         self.httpd.shutdown()
+        # HTTP/1.1 handlers outlive serve_forever. Close their keep-alive sockets
+        # so a restarted add-on cannot answer requests from stale scene state.
+        with self.lock:
+            connections = list(self.connections)
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            connection.close()
         self.httpd.server_close()
         self.thread.join(timeout=2)

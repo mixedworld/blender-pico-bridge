@@ -16,7 +16,8 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
     initialMonitor: Boolean = false, debugReveal: Float? = null, initiallyCollapsed: Boolean = false, hideSourceInitial: Boolean = true,
     private val saveSourceOption: (Boolean) -> Unit = {}, private val camera: ScanCameraUseCase? = null,
     initialMarkerSettings: MarkerSettings = MarkerSettings(),
-    private val saveMarkerSettings: (MarkerSettings)->Unit = {}) : ViewModel() {
+    private val saveMarkerSettings: (MarkerSettings)->Unit = {},
+    val renderVideo: com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase? = null) : ViewModel() {
     private val _state = MutableStateFlow(BridgeUiState(endpoint = pairing.endpoint, token = pairing.token,
         mode = initialMode, explosion = initialExplosion.coerceIn(0f, 1f),markerSettings=initialMarkerSettings,
         autoRoom = initialRoom, collapsed = initiallyCollapsed, hideSource = hideSourceInitial,
@@ -52,7 +53,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         previous?.cancel();pendingViewport=null;pendingCamera=null
         val packet=_scene.value.packet
         val headCamera=state.value.room
-        val capability=if(headCamera) packet?.cameraSyncVersion==1 && packet.cameraControlEnabled && state.value.monitor.enabled && state.value.monitor.locked
+        val capability=if(headCamera) packet?.cameraSyncVersion==1 && packet.cameraControlEnabled && ((state.value.monitor.enabled && state.value.monitor.locked) || state.value.renderWindow.enabled)
             else packet?.viewportControlEnabled==true
         val allowed=enabled && capability
         if (!preserveRoomIntent) roomViewportRequested = headCamera && allowed
@@ -72,6 +73,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                     if(headCamera) {
                         val frame=pendingCamera
                         if(frame==null) {
+                            if(state.value.renderWindow.enabled) { missingFrames=0;continue }
                             check(++missingFrames<182) { "Head tracking unavailable" }
                             continue
                         }
@@ -141,6 +143,24 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 if (hidden) delay(2500)
             } while (hidden && isActive)
         }
+    }
+    private var beforeRenderLink=false
+    private var renderVideoMessage="Off"
+    private fun renderWindow(value: RenderWindowState) {
+        _state.update { it.copy(renderWindow=value) }
+        _scene.update { it.copy(renderWindow=value,renderPairing=if(value.enabled) Pairing(state.value.endpoint,state.value.token) else null) }
+    }
+    private fun enableRender(enabled: Boolean) {
+        if(enabled && (!state.value.room || !state.value.hasModel || !state.value.renderAvailable)) return
+        if(enabled==state.value.renderWindow.enabled)return
+        if(enabled) { beforeRenderLink=state.value.linkViewport;linkViewport(false);sourceVisibility(false) }
+        renderWindow(state.value.renderWindow.copy(enabled=enabled))
+        _state.update { it.copy(renderStreaming=false,renderStatus=if(enabled) "On Mac: Share render window → choose Blender" else "Off") }
+        if(!enabled && beforeRenderLink && state.value.room) linkViewport(true)
+    }
+    private fun renderCamera() {
+        val s=state.value
+        if(s.renderWindow.enabled) linkViewport(s.renderStreaming && s.renderWindow.mode==RenderWindowMode.SCENE_ALIGNED)
     }
     private var loadedRevision: String? = null
 
@@ -249,7 +269,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 cancelTouch();beginHandles()
                 _state.update { it.copy(touchApplied=true,note="Touch alignment applied. Check the monitor plane, then choose Lock alignment in the alignment controls.") }
             }
-            is BridgeUiEvent.LinkViewport -> linkViewport(event.enabled)
+            is BridgeUiEvent.LinkViewport -> if(!state.value.renderWindow.enabled) linkViewport(event.enabled)
             is BridgeUiEvent.TrackedCameraFrame -> if(state.value.linkViewport && state.value.room) { pendingCamera=event.camera }
             is BridgeUiEvent.MoveViewport -> if (state.value.linkViewport) runCatching { MergeViewportDeltaUseCase()(pendingViewport,event.delta) }.getOrNull()?.let { pendingViewport = it }
             is BridgeUiEvent.ScanRequested -> { cancelTouch();requestScan(event.purpose) }
@@ -274,7 +294,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 _state.update { it.copy(hideSource = event.enabled) }; _scene.update { it.copy(hideSource = event.enabled) }
                 if (!event.enabled) sourceVisibility(false)
             }
-            is BridgeUiEvent.SourceHidden -> if (sourceHidden != event.hidden) sourceVisibility(event.hidden && state.value.hideSource && state.value.room)
+            is BridgeUiEvent.SourceHidden -> if (sourceHidden != event.hidden) sourceVisibility(event.hidden && state.value.hideSource && state.value.room && !state.value.renderWindow.enabled)
             is BridgeUiEvent.HoverChanged -> { _state.update { it.copy(hover = event.enabled) }; _scene.update { it.copy(hover = event.enabled) } }
             is BridgeUiEvent.CollapseChanged -> { if (event.collapsed) { closeMarkers();cancelTouch() }; _state.update { it.copy(collapsed = event.collapsed) } }
             is BridgeUiEvent.ConnectionPanelChanged -> {
@@ -282,7 +302,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 if (event.visible) requestScan(ScanPurpose.PAIRING)
             }
             is BridgeUiEvent.RoomChanged -> {
-                if (!event.room) { closeMarkers();cancelTouch();clearHandles(); _scene.update { it.copy(alignmentSave=null) } }
+                if (!event.room) { enableRender(false);closeMarkers();cancelTouch();clearHandles(); _scene.update { it.copy(alignmentSave=null) } }
                 linkViewport(false)
                 _state.update { it.copy(room = event.room, autoRoom = false, enteringRoom = false) }
                 if (!event.room && sourceHidden) sourceVisibility(false)
@@ -293,7 +313,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             BridgeUiEvent.Fit -> command(SceneCommand.FIT)
             BridgeUiEvent.SourceSize -> command(SceneCommand.SOURCE_SIZE)
             BridgeUiEvent.AlignMonitor -> if (state.value.room) {
-                linkViewport(false);closeMarkers();cancelTouch();if(sourceHidden) sourceVisibility(false)
+                enableRender(false);linkViewport(false);closeMarkers();cancelTouch();if(sourceHidden) sourceVisibility(false)
                 _scene.update { it.copy(alignmentSave=null) };monitor { it.copy(enabled=true,editing=true,locked=false) };beginHandles()
                 _state.update { it.copy(collapsed=false,connectionPanel=false,note="Place cyan handles on Blender’s 3D viewport corners, not the monitor corners; adjust the amber handle for curve.") }
             }
@@ -322,7 +342,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             BridgeUiEvent.Connect -> { stopScan(); open() }
             BridgeUiEvent.Refresh -> { stopScan(); open(refresh = true) }
             BridgeUiEvent.Disconnect -> {
-                closeMarkers();cancelTouch();clearHandles()
+                enableRender(false);closeMarkers();cancelTouch();clearHandles()
                 linkViewport(false)
                 stopScan()
                 if (sourceHidden) sourceVisibility(false)
@@ -336,12 +356,28 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 _scene.update { it.copy(reset = it.reset + 1, explosion = 0f) }
                 _state.update { it.copy(scale = 1f, explosion = 0f) }
             }
+            is BridgeUiEvent.RenderEnabled -> enableRender(event.enabled)
+            is BridgeUiEvent.RenderMode -> {
+                renderWindow(state.value.renderWindow.copy(mode=event.mode));renderCamera()
+            }
+            is BridgeUiEvent.RenderStatus -> if(state.value.renderWindow.enabled) {
+                renderVideoMessage=event.value.message
+                val changed=state.value.renderStreaming!=event.value.streaming
+                _state.update { it.copy(renderStatus=event.value.message,renderStreaming=event.value.streaming) }
+                if(changed)renderCamera()
+            }
+            is BridgeUiEvent.RenderProjection -> if(state.value.renderWindow.enabled) _state.update {
+                it.copy(renderStatus=if(event.valid) renderVideoMessage else "View unavailable · face the render window")
+            }
+            BridgeUiEvent.RecenterRender -> renderWindow(state.value.renderWindow.let { it.copy(reset=it.reset+1) })
+            BridgeUiEvent.RetryRender -> renderWindow(state.value.renderWindow.let { it.copy(retry=it.retry+1) })
             is BridgeUiEvent.ModelReady -> {
                 loadedRevision = event.revision
                 _state.update { it.copy(phase = "live", hasModel = true, status = "Live from Blender", fitScale = event.fitScale,
                     note = inspectionHint(it.mode)) }
                 if (resumeRoomViewportOnModel == event.revision && _scene.value.packet?.revision == event.revision)
                     linkViewport(true)
+                if(state.value.renderWindow.enabled)renderCamera()
             }
             is BridgeUiEvent.FitChanged -> _state.update { it.copy(fitScale = event.scale) }
             is BridgeUiEvent.SceneError -> {
@@ -389,6 +425,9 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                         }
                     }
                     is BridgeUpdate.Frame -> {
+                        _state.update { it.copy(renderAvailable=update.packet.renderStreamVersion==1) }
+                        if(kotlin.math.abs(state.value.renderWindow.aspect-update.packet.renderAspect)>.001f)
+                            renderWindow(state.value.renderWindow.copy(aspect=update.packet.renderAspect))
                         if (state.value.markerPhase!=MarkerPhase.NONE && markerBoard!=null && update.packet.board!=markerBoard) {
                             stopScan();_state.update { it.copy(markerPhase=MarkerPhase.SETUP,markerFrame=null,scanStatus="Blender marker layout changed. Scan again without resizing its window.") }
                         }

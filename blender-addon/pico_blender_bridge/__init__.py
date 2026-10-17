@@ -20,12 +20,14 @@ from .pairing import pairing_payload
 from .display import PairingDisplay
 from .tracked_camera import TrackedCamera
 from .source_visibility import hide_source_objects
+from .render_stream import viewport_capture
 
 _server = None
 _exporting = False
 _dirty_at = 0.0
 _last_frame = None
 _source_visibility = {}
+_capture_view = None
 _scope = []
 _node_names = set()
 _clip_start = 1
@@ -175,6 +177,24 @@ def update_source_visibility(hidden):
         restore_source_visibility()
 
 
+def update_capture_view(area=None, enabled=False):
+    """Keep the shared viewport clean, restoring user overlay/gizmo settings on stop."""
+    global _capture_view
+    space = area.spaces.active if area and enabled else None
+    if _capture_view and _capture_view[0] != space:
+        previous, overlays, gizmos = _capture_view
+        try:
+            previous.overlay.show_overlays = overlays
+            previous.show_gizmo = gizmos
+        except (ReferenceError, RuntimeError):
+            pass
+        _capture_view = None
+    if space and _capture_view is None:
+        _capture_view = (space, space.overlay.show_overlays, space.show_gizmo)
+        space.overlay.show_overlays = False
+        space.show_gizmo = False
+
+
 def camera_tick():
     """Apply only the latest head pose; do not wait for scene-state/export work."""
     global _message
@@ -209,6 +229,9 @@ def tick():
     area, region = _display.target() if _display else (None, None)
     if _display:
         _display.update(time.monotonic() - _server.last_client < 3)
+    with _server.lock:
+        publisher_ready = _server.render_signaling.state()['publisherReady']
+    update_capture_view(area, publisher_ready)
     viewport = area.spaces.active.region_3d if area else None
     command = _server.take_viewport_command()
     if command and cfg.allow_viewport_control and viewport and region and viewport.view_perspective != 'CAMERA':
@@ -255,6 +278,13 @@ def tick():
         view_state = {'location': list(viewport.view_location), 'rotation': [q.x,q.y,q.z,q.w],
                       'distance': viewport.view_distance, 'perspective': viewport.view_perspective,
                       'lens': area.spaces.active.lens, 'width': region.width, 'height': region.height}
+    capture_viewport = None
+    if area and region:
+        window = next((w for w in bpy.context.window_manager.windows if area in w.screen.areas[:]), None)
+        if window:
+            capture_viewport = viewport_capture(window.width, window.height,
+                (region.x,region.y,region.width,region.height),
+                [(r.type,r.x,r.y,r.width,r.height) for r in area.regions])
     _server.publish_state({"frame": scene.frame_current, "frameStart": scene.frame_start,
                            "frameEnd": scene.frame_end, "fps": fps, "playing": playing,
                            "timeSeconds": (scene.frame_current - _clip_start) / _clip_fps,
@@ -262,6 +292,7 @@ def tick():
                            "viewport": view_state, "viewportControlEnabled": bool(cfg.allow_viewport_control and viewport and viewport.view_perspective != 'CAMERA'),
                            "cameraSyncVersion": 1, "cameraControlEnabled": bool(cfg.allow_viewport_control and viewport),
                            "cameraSyncActive": _tracked_camera.active,
+                           "renderStreamVersion": 1, "captureViewport": capture_viewport,
                            "calibrationBoard": _display.board if _display else None,
                            "sentAtUnixMs": time.time_ns() // 1000000})
     if cfg.auto_export and _dirty_at and not _source_visibility and not playing and time.monotonic() - _dirty_at > 0.75:
@@ -322,6 +353,7 @@ def start_bridge():
 def stop_bridge():
     global _server, _message, _display
     restore_source_visibility()
+    update_capture_view()
     _tracked_camera.stop()
     current, _server = _server, None
     if current:
@@ -466,6 +498,19 @@ def lan_address():
         return "127.0.0.1"
 
 
+class PICO_BRIDGE_OT_render_window(bpy.types.Operator):
+    bl_idname = "pico_bridge.render_window"
+    bl_label = "Share render window"
+    bl_description = "Open the local WebRTC publisher, then choose the Blender window to share"
+
+    def execute(self, context):
+        if not _server:
+            self.report({'WARNING'}, "Start the bridge first")
+            return {'CANCELLED'}
+        bpy.ops.wm.url_open(url=f"http://127.0.0.1:{_server.port}/render#token={_server.token}")
+        return {'FINISHED'}
+
+
 class PICO_BRIDGE_PT_panel(bpy.types.Panel):
     bl_label = "PICO Blender Bridge"
     bl_idname = "PICO_BRIDGE_PT_panel"
@@ -494,6 +539,7 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
                 layout.operator('pico_bridge.center_marker_only', text='Show all markers' if _display.center_only else 'Center reference only')
             layout.prop(cfg, 'allow_viewport_control')
             layout.prop(cfg, "token")
+            layout.operator("pico_bridge.render_window")
             layout.operator("pico_bridge.copy_pairing")
             layout.operator("pico_bridge.refresh")
             layout.operator("pico_bridge.stop")
@@ -507,7 +553,7 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
 
 
 CLASSES = (PicoBridgeSettings, PICO_BRIDGE_OT_start, PICO_BRIDGE_OT_stop,
-           PICO_BRIDGE_OT_refresh, PICO_BRIDGE_OT_pairing, PICO_BRIDGE_OT_board, PICO_BRIDGE_OT_qr, PICO_BRIDGE_OT_center_markers, PICO_BRIDGE_PT_panel)
+           PICO_BRIDGE_OT_refresh, PICO_BRIDGE_OT_pairing, PICO_BRIDGE_OT_board, PICO_BRIDGE_OT_qr, PICO_BRIDGE_OT_center_markers, PICO_BRIDGE_OT_render_window, PICO_BRIDGE_PT_panel)
 
 
 def register():

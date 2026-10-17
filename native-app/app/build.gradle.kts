@@ -47,6 +47,7 @@ dependencies {
     implementation(libs.spatial.ml.securemr)
     implementation("com.pico.spatial.ml:readback")
     implementation("com.google.zxing:core:3.5.3")
+    implementation("io.github.webrtc-sdk:android:150.7871.01")
     implementation("org.opencv:opencv:4.12.0")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation(libs.androidx.core.ktx)

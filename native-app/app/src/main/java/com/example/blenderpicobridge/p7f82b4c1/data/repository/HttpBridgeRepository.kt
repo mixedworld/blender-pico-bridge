@@ -207,6 +207,9 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
             json.optJSONArray("viewQuaternion")?.values(4), json.optBoolean("sourceHidden", false),
             board, json.optBoolean("viewportControlEnabled", false),viewport,
             json.optInt("cameraSyncVersion",0),json.optBoolean("cameraControlEnabled",false),
+            json.optInt("renderStreamVersion",0),
+            json.optJSONObject("captureViewport")?.let { it.getDouble("width").toFloat()/it.getDouble("height").toFloat() }?.takeIf { it.isFinite() && it in .1f..10f } ?: (16f/9f),
+            json.optJSONObject("captureViewport")?.optJSONArray("crop")?.values(4) ?: listOf(0f,0f,1f,1f),
         )
     }
 }
