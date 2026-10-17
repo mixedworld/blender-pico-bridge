@@ -1,4 +1,4 @@
-# Direct Blender video with transparency (experimental, 0.6.1)
+# Direct Blender video with transparency (experimental, 0.6.2)
 
 Blender supplies rendered RGBA pixels to a local encoder process. WebRTC carries them directly to the PICO app. No browser, screen recording permission, PICO Connect or desktop sharing is needed. **Cycles, Eevee and Workbench** share the same encoder and receiver. You can also stream Solid, Material Preview or Wireframe viewport shading.
 
@@ -16,7 +16,7 @@ Transparent pixels have their RGB cleared before encoding. This avoids spending 
 
 ## Install once
 
-Use the add-on **0.6.1** and native APK from the same checkout. Packaged builds also include `render-worker-setup.zip`: extract it and run the helper inside its `tools` folder if you are not using a repository checkout. Install the optional encoder environment using an external **Python 3.10+**:
+Use the add-on **0.6.2** and native APK from the same checkout. Packaged builds also include `render-worker-setup.zip`: extract it and run the helper inside its `tools` folder if you are not using a repository checkout. Install the optional encoder environment using an external **Python 3.10+**:
 
 ```sh
 # macOS / Linux, from the repository directory
@@ -100,3 +100,19 @@ User verification of 0.5.2: in the emulator, with Scene-aligned rendering enable
 ### Additional appearances (0.6.1)
 
 On Blender 5.2.2 on the development Mac, Workbench Scene renderer, Solid and Wireframe produced real transparent GPU frames. Stereo checks passed for Workbench Scene renderer/Solid/Wireframe, Eevee Material Preview and Cycles-selected Solid; Eevee Material Preview also passed Mono. Both eye images contained clear and covered pixels. Non-Cycles beauty modes used no Cycles hook or auxiliary render window. The existing emulator receiver decoded Workbench stereo and returned distinct per-eye camera commands. Switching from Eevee with saved Material Preview to Workbench stopped the worker cleanly even though Workbench cannot restore that shading enum. Physical headset rendering and performance of these additional looks remain unverified.
+
+### Native model materials (0.6.2)
+
+The floating render stream and the native 3D model have independent appearances. In Blender’s **PICO Bridge → Native materials**, choose:
+
+| Setting | Native model appearance |
+| --- | --- |
+| **Auto** (default) | Workbench uses matte Material Viewport Display colours; Cycles/Eevee keep the authored PBR export. Switching render engines updates the model when Sync model edits is enabled. |
+| **PBR materials** | Always export authored shader materials and supported glTF textures, including actual metalness and roughness. |
+| **Viewport colours (matte)** | Always use material viewport colours, non-metallic rough surfaces and no shader texture/normal/clearcoat maps. |
+
+These conversions affect only the published GLB. They do not edit Blender materials, geometry, animation or the render stream. With Sync model edits off, click **Refresh Model** after changing the option.
+
+Workbench is a different renderer: [its material colour mode](https://docs.blender.org/manual/en/5.1/render/workbench/color.html) uses Viewport Display colours, while [studio and MatCap lighting](https://docs.staging.blender.org/manual/en/latest/render/workbench/lighting.html) do not use scene lights. The matte native option approximates these material colours under PICO’s environment lighting; it does not reproduce MatCap/studio lighting, cavity, Object/Random/Single/Attribute colour modes or textures. Use the render stream for Blender’s exact appearance.
+
+Procedural shader networks can also lose information during ordinary PBR glTF export. Prefer supported Principled BSDF/image-texture materials or bake procedural textures when you need them on the native model.
