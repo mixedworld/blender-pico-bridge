@@ -8,7 +8,7 @@ View a Blender collection in the PICO Emulator with PBR materials, inspect its s
 
 **Prototype · Emulator-first · MIT**
 
-This feature branch adds an experimental [QR pairing, five-handle viewport alignment and viewport link](docs/QR_ALIGNMENT.md). Build its add-on 0.4.0 and APK together. The 0.3.0 release below remains the emulator baseline; real-device QR pairing is verified; physical monitor fitting and automatic world alignment remain experimental.
+This feature branch adds an experimental [QR pairing, five-handle viewport alignment and viewport link](docs/QR_ALIGNMENT.md). Build its add-on 0.6.1 and APK together. The 0.3.0 release below remains the emulator baseline; real-device QR pairing is verified; physical monitor fitting and automatic world alignment remain experimental.
 
 This public setup targets **PICO OS 6.1 Emulator**. The macOS Apple Silicon workflow has been exercised; Windows instructions and x86-64 APK packaging are provided, but Windows runtime testing is still needed. Physical headset deployment and monitor extraction are experimental and outside this guide.
 
@@ -30,7 +30,7 @@ This public setup targets **PICO OS 6.1 Emulator**. The macOS Apple Silicon work
 
 For later sessions, repeat these steps with your own `.blend` file. To publish another model, change **Source**, then click **Refresh Model** in Blender. **Collection** lets you publish just one collection; choose it in the collection picker that appears. For an explosion, use several separate mesh objects. Opening another `.blend` stops the current bridge, so check that it has started again and reconnect with its current pairing details.
 
-**Using a real headset on this feature branch?** With matching 0.4.0 add-on and app builds, choose **Connect via → Wi-Fi / LAN** in Blender and put both devices on the same reachable LAN. If the pairing code is not visible, click **Show large pairing QR**. In the headset, open **Connection → Scan Blender QR**, allow Camera, and look at the code. This replaces manual URL/token entry. Headset pairing and monitor alignment are experimental; continue with the [headset setup and alignment guide](docs/QR_ALIGNMENT.md).
+**Using a real headset on this feature branch?** With matching 0.6.1 add-on and app builds, choose **Connect via → Wi-Fi / LAN** in Blender and put both devices on the same reachable LAN. If the pairing code is not visible, click **Show large pairing QR**. In the headset, open **Connection → Scan Blender QR**, allow Camera, and look at the code. This replaces manual URL/token entry. Headset pairing and monitor alignment are experimental; continue with the [headset setup and alignment guide](docs/QR_ALIGNMENT.md).
 
 ## Room alignment: start with the five handles
 
@@ -44,11 +44,13 @@ For later sessions, repeat these steps with your own `.blend` file. To publish a
 
 See the [five-handle walkthrough](docs/QR_ALIGNMENT.md#manual-alignment-with-five-handles) for details. Marker, depth and touch methods remain experimental alternatives.
 
-## Optional Cycles render window
+## Optional direct Cycles / Eevee render window
 
-The `feature/cycles-render-window` branch adds a movable WebRTC video window in Room. In Blender’s **PICO Bridge** panel, click **Share render window**, share the **Blender window** in Chrome, then enable **Tools → Render window → Show render window** in PICO. Grab it to move; use two hands to resize. Toggle **Scene-aligned** for a window into the native model, or **Live display** for Blender’s current view.
+Stream Blender's actual rendered pixels directly to a movable transparent window in PICO. No Chrome or Mac screen sharing is needed. Install the optional encoder once with `python3 tools/setup_render_worker.py`, then in Blender choose **PICO Bridge → Start viewport stream**. In the app enter **Room → Tools → Render window → Show render window**. Toggle **Scene-aligned** or **Live display**.
 
-See the [render-window setup and mode guide](docs/RENDER_WINDOW.md). This is experimental and requires matching source builds; it is separate from the released emulator baseline.
+Optional [Stereo with manual eye separation](docs/STEREO_STREAMING.md) sends distinct left/right views together; Mono remains the default.
+
+See the [direct-stream setup and codec comparison](docs/DIRECT_STREAMING.md) and [movement/mode guide](docs/RENDER_WINDOW.md). Cycles supports collection-based camera isolation. Eevee, Workbench, Solid, Material Preview and Wireframe stream visible geometry against a transparent world background; choose **Stream appearance** in Blender. Both backends have passed emulator video/alpha output tests on this Mac. Physical-device testing of this new path is pending.
 
 ## What it does
 

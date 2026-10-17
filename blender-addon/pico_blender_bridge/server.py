@@ -99,7 +99,7 @@ class BridgeServer:
                     return
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
-                    limit = 300000 if path == "/v1/render-stream" else (2048 if path in ("/v1/viewport-delta", "/v1/view-camera") else 64)
+                    limit = 300000 if path == "/v1/render-stream" else (4096 if path in ("/v1/viewport-delta", "/v1/view-camera") else 64)
                     if not 0 < length <= limit:
                         raise ValueError("Invalid body size")
                     body = json.loads(self.rfile.read(length))
@@ -219,7 +219,7 @@ class BridgeServer:
         if not isinstance(body, dict) or type(body.get('active')) is not bool:
             raise ValueError('Expected camera stream')
         fields = {'position', 'rotation', 'slopes', 'near', 'far'} if body['active'] else set()
-        if set(body) != base | fields:
+        if set(body) != base | fields | ({'eyes'} if body['active'] and 'eyes' in body else set()):
             raise ValueError('Unexpected camera fields')
         for key in ('session', 'stream'):
             if not isinstance(body[key], str) or not 1 <= len(body[key]) <= 64:
@@ -230,6 +230,14 @@ class BridgeServer:
             raise ValueError('Invalid sequence')
         if not body['active']:
             return
+        if 'eyes' in body:
+            eyes = body['eyes']
+            if not isinstance(eyes, list) or len(eyes) != 2:
+                raise ValueError('Expected left and right cameras')
+            for eye in eyes:
+                if not isinstance(eye, dict) or set(eye) != fields:
+                    raise ValueError('Unexpected eye fields')
+                BridgeServer.validate_view_camera({**{k: body[k] for k in base}, **eye})
         def number(v):
             return type(v) in (float, int) and math.isfinite(v) and abs(v) <= 1e6
         for key, count in (('position', 3), ('rotation', 4), ('slopes', 4)):

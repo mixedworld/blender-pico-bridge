@@ -28,7 +28,7 @@ class WebRtcRenderRepository(private val context: Context): RenderVideoRepositor
         }
         return Session(surface,pairing,aspect,status)
     }
-    private class Session(surface: Surface,private val pairing: Pairing,aspect: Float,
+    private class Session(surface: Surface,private val pairing: Pairing,private val aspect: Float,
         private val status: (RenderVideoStatus)->Unit): AutoCloseable {
         private val scope=CoroutineScope(SupervisorJob()+Dispatchers.Main.immediate)
         private val closed=AtomicBoolean(false)
@@ -36,43 +36,63 @@ class WebRtcRenderRepository(private val context: Context): RenderVideoRepositor
         private val firstFrame=AtomicBoolean(false)
         private val lastFrame=AtomicLong(0)
         private val egl=EglBase.create()
+        private val drawer=AlphaAtlasDrawer()
+        @Volatile private var stereo=false
         private val renderer=EglRenderer("Blender render window")
         private val factory=PeerConnectionFactory.builder().setVideoDecoderFactory(DefaultVideoDecoderFactory(egl.eglBaseContext)).createPeerConnectionFactory()
         private var track: VideoTrack?=null
         private var peer: PeerConnection?=null
-        private val stream=UUID.randomUUID().toString()
+        @Volatile private var stream=UUID.randomUUID().toString()
+        private val disconnectedAt=AtomicLong(0)
+        private var recoveryStarted=0L
+        private fun recovering(): Boolean {
+            if(recoveryStarted==0L)recoveryStarted=SystemClock.elapsedRealtime()
+            return SystemClock.elapsedRealtime()-recoveryStarted<15000
+        }
         private val localIce=ConcurrentLinkedQueue<IceCandidate>()
         private val sink=VideoSink { frame ->
             if(!closed.get()) {
                 lastFrame.set(SystemClock.elapsedRealtime())
                 renderer.onFrame(frame)
                 if(firstFrame.compareAndSet(false,true)) {
-                    val width=frame.rotatedWidth;val height=frame.rotatedHeight
+                    val width=if(stereo) frame.rotatedWidth/2 else frame.rotatedWidth;val height=if(drawer.alphaAtlas) frame.rotatedHeight/2 else frame.rotatedHeight
+                    val frameStream=stream
                     scope.launch {
+                        if(closed.get() || stream!=frameStream)return@launch
+                        recoveryStarted=0L
                         Log.i("BlenderBridge","RENDER_VIDEO firstFrame=${width}x${height}")
-                        status(RenderVideoStatus("Live render · $width × $height",true))
+                        status(RenderVideoStatus("Live ${if(stereo) "stereo" else "render"} · $width × $height",true,stereo=stereo))
                     }
                 }
             }
         }
         init {
-            renderer.init(egl.eglBaseContext,EglBase.CONFIG_PLAIN,GlRectDrawer())
+            renderer.init(egl.eglBaseContext,EglBase.CONFIG_RGBA,drawer)
             renderer.setMirror(false);renderer.setLayoutAspectRatio(aspect);renderer.createEglSurface(surface)
             scope.launch {
-                try { connect() }
-                catch(cancelled: CancellationException) { throw cancelled }
-                catch(error: Exception) {
-                    val reason=error.message?.takeIf { it in setOf("Peer disconnected","Stream lease changed","Mac share stopped","No video received","Offer failed","Description failed","Render signaling unavailable","Oversized signaling response") } ?: "transport_or_decoder"
-                    Log.w("BlenderBridge","RENDER_VIDEO stopped: ${error.javaClass.simpleName} $reason")
-                    status(RenderVideoStatus("Stream unavailable · check Mac sharing, then Retry stream"))
-                } finally {
-                    withContext(NonCancellable+Dispatchers.IO) { runCatching { signal(JSONObject().put("type","stop").put("stream",stream)) } }
+                while(currentCoroutineContext().isActive && !closed.get()) {
+                    stream=UUID.randomUUID().toString()
+                    val attempt=stream
+                    failed.set(false);firstFrame.set(false);lastFrame.set(0);disconnectedAt.set(0);localIce.clear()
+                    try { connect() }
+                    catch(cancelled: CancellationException) { throw cancelled }
+                    catch(error: Exception) {
+                        Log.w("BlenderBridge","RENDER_VIDEO retry: ${error.javaClass.simpleName}")
+                        status(RenderVideoStatus("Reconnecting to Blender video…",recovering=recovering()))
+                    } finally {
+                        withContext(NonCancellable+Dispatchers.IO) {
+                            runCatching { signal(JSONObject().put("type","stop").put("stream",attempt)) }
+                        }
+                        releasePeer()
+                    }
+                    delay(1000)
                 }
             }
         }
-        private fun emit(message: String) { scope.launch { if(!closed.get()) status(RenderVideoStatus(message)) } }
+
         private suspend fun connect() {
-            status(RenderVideoStatus("Connecting to the Mac render stream…"))
+            status(RenderVideoStatus("Connecting to Blender’s render stream…",recovering=recovering()))
+            val attempt=stream
             val observer=object: PeerConnection.Observer {
                 override fun onSignalingChange(value: PeerConnection.SignalingState) {}
                 override fun onIceConnectionChange(value: PeerConnection.IceConnectionState) {}
@@ -81,6 +101,7 @@ class WebRtcRenderRepository(private val context: Context): RenderVideoRepositor
                     Log.i("BlenderBridge","RENDER_ICE gathering=$value")
                 }
                 override fun onIceCandidate(value: IceCandidate) {
+                    if(closed.get() || stream!=attempt)return
                     localIce.add(value)
                     Log.i("BlenderBridge","RENDER_ICE localCandidate")
                 }
@@ -90,13 +111,17 @@ class WebRtcRenderRepository(private val context: Context): RenderVideoRepositor
                 override fun onDataChannel(value: DataChannel) { value.close() }
                 override fun onRenegotiationNeeded() {}
                 override fun onConnectionChange(value: PeerConnection.PeerConnectionState) {
-                    if(value==PeerConnection.PeerConnectionState.FAILED || value==PeerConnection.PeerConnectionState.DISCONNECTED) {
-                        failed.set(true);emit("Video disconnected · Retry stream")
+                    if(closed.get() || stream!=attempt)return
+                    when(value) {
+                        PeerConnection.PeerConnectionState.FAILED -> failed.set(true)
+                        PeerConnection.PeerConnectionState.DISCONNECTED -> disconnectedAt.compareAndSet(0,SystemClock.elapsedRealtime())
+                        PeerConnection.PeerConnectionState.CONNECTED -> disconnectedAt.set(0)
+                        else -> Unit
                     }
                 }
                 override fun onTrack(value: RtpTransceiver) {
                     scope.launch {
-                        if(!closed.get()) {
+                        if(!closed.get() && stream==attempt) {
                             track?.removeSink(sink)
                             track=value.receiver.track() as? VideoTrack
                             track?.addSink(sink)
@@ -112,9 +137,11 @@ class WebRtcRenderRepository(private val context: Context): RenderVideoRepositor
             setDescription { pc.setLocalDescription(it,offer) }
             signal(JSONObject().put("type","offer").put("stream",stream).put("sdp",pc.localDescription.description))
             var answered=false;var beat=0;var waiting=false;var publisherSeen=false
-            var answerAt=0L;var remoteIceIndex=0
+            var answerAt=0L;var remoteIceIndex=0;var recoveryExpired=false
             while(currentCoroutineContext().isActive) {
                 check(!failed.get()) { "Peer disconnected" }
+                val disconnected=disconnectedAt.get()
+                check(disconnected==0L || SystemClock.elapsedRealtime()-disconnected<4000) { "Peer disconnected" }
                 while(true) {
                     val candidate=localIce.poll() ?: break
                     signal(JSONObject().put("type","ice").put("stream",stream).put("side","viewer")
@@ -123,14 +150,17 @@ class WebRtcRenderRepository(private val context: Context): RenderVideoRepositor
                 val state=request(null)
                 check(state.optString("stream")==stream) { "Stream lease changed" }
                 val publisherReady=state.optBoolean("publisherReady")
+                stereo=state.optString("format")=="stereo-sbs-color-alpha-top-bottom-v1"
+                drawer.alphaAtlas=stereo || state.optString("format")=="color-alpha-top-bottom-v1"
+                renderer.setLayoutAspectRatio(if(drawer.alphaAtlas) 0f else aspect)
                 check(!publisherSeen || publisherReady) { "Mac share stopped" }
                 publisherSeen=publisherSeen || publisherReady
                 if(!publisherReady && !waiting) {
-                    waiting=true;status(RenderVideoStatus("On Mac: Share render window → choose the Blender window"))
+                    waiting=true;status(RenderVideoStatus("In Blender: PICO Bridge → Start viewport stream",recovering=recovering()))
                 }
                 if(!answered && !state.isNull("answer")) {
                     setDescription { pc.setRemoteDescription(it,SessionDescription(SessionDescription.Type.ANSWER,state.getString("answer"))) }
-                    answered=true;answerAt=SystemClock.elapsedRealtime();status(RenderVideoStatus("Receiving Blender video…"))
+                    answered=true;answerAt=SystemClock.elapsedRealtime();status(RenderVideoStatus("Receiving Blender video…",recovering=recovering()))
                 }
                 if(answered) {
                     val remote=state.optJSONArray("publisherCandidates")
@@ -141,9 +171,15 @@ class WebRtcRenderRepository(private val context: Context): RenderVideoRepositor
                 }
                 val frameAt=lastFrame.get()
                 val now=SystemClock.elapsedRealtime()
+                if(firstFrame.get())recoveryExpired=false
+                else if(!recovering() && !recoveryExpired) {
+                    recoveryExpired=true
+                    status(RenderVideoStatus("Waiting for Blender video · reconnecting automatically"))
+                }
                 check(!answered || frameAt!=0L || now-answerAt<15000) { "No video received" }
                 if(frameAt!=0L && now-frameAt>3000 && firstFrame.compareAndSet(true,false))
-                    status(RenderVideoStatus("Video paused · waiting for the Mac"))
+                    status(RenderVideoStatus("Video paused · reconnecting automatically",recovering=recovering()))
+                check(frameAt==0L || now-frameAt<15000) { "No video received" }
                 if(++beat%8==0) signal(JSONObject().put("type","viewer").put("stream",stream))
                 delay(250)
             }
@@ -167,7 +203,7 @@ class WebRtcRenderRepository(private val context: Context): RenderVideoRepositor
         private suspend fun signal(body: JSONObject) { request(body) }
         private suspend fun request(body: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
             val connection=URI(pairing.endpoint+"/v1/render-stream").toURL().openConnection() as HttpURLConnection
-            connection.connectTimeout=3000;connection.readTimeout=3000
+            connection.connectTimeout=3000;connection.readTimeout=10000
             connection.setRequestProperty("Authorization","Bearer "+pairing.token)
             try {
                 if(body!=null) {
@@ -181,11 +217,14 @@ class WebRtcRenderRepository(private val context: Context): RenderVideoRepositor
                 JSONObject(String(bytes))
             } finally { connection.disconnect() }
         }
+        private fun releasePeer() {
+            track?.removeSink(sink);track=null
+            peer?.close();peer?.dispose();peer=null
+        }
         /** Synchronous decoder/sink shutdown must finish before the borrowed Surface is released. */
         override fun close() {
             if(!closed.compareAndSet(false,true))return
-            scope.cancel();track?.removeSink(sink);track=null
-            peer?.close();peer?.dispose();peer=null
+            scope.cancel();releasePeer()
             renderer.release();factory.dispose();egl.release()
             Log.i("BlenderBridge","RENDER_VIDEO released")
         }

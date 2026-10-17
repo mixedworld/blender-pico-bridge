@@ -1,6 +1,6 @@
 bl_info = {
     "name": "PICO Blender Bridge", "author": "PICO Blender Bridge",
-    "version": (0, 4, 0), "blender": (4, 2, 0),
+    "version": (0, 6, 1), "blender": (4, 2, 0),
     "location": "3D View > Sidebar > PICO Bridge",
     "description": "Live PBR model and Blender timeline bridge to PICO Spatial SDK",
     "category": "3D View",
@@ -20,7 +20,8 @@ from .pairing import pairing_payload
 from .display import PairingDisplay
 from .tracked_camera import TrackedCamera
 from .source_visibility import hide_source_objects
-from .render_stream import viewport_capture
+from .render_stream import viewport_capture as viewport_crop
+from .viewport_capture import DirectViewportCapture, default_worker_python
 
 _server = None
 _exporting = False
@@ -28,6 +29,7 @@ _dirty_at = 0.0
 _last_frame = None
 _source_visibility = {}
 _capture_view = None
+_direct_capture = None
 _scope = []
 _node_names = set()
 _clip_start = 1
@@ -204,28 +206,50 @@ def camera_tick():
     cfg = scene.pico_bridge
     area, region = _display.target() if _display else (None, None)
     camera_command = _server.take_camera_command()
-    if _tracked_camera.active and (not cfg.allow_viewport_control or not _server.camera_lease_active()):
-        _tracked_camera.stop()
+    if _tracked_camera.active:
+        # Native model loading can outlast a pose lease while video remains healthy.
+        # Hold the aligned view while both video leases are fresh. Explicit release
+        # below restores immediately; disconnected viewers expire after 20 seconds.
+        with _server.lock:
+            video = _server.render_signaling.state()
+        recovering = bool(_direct_capture and _direct_capture.running
+            and video["stream"] is not None and video["publisherReady"])
+        if not cfg.allow_viewport_control or (not _server.camera_lease_active() and not recovering):
+            _tracked_camera.stop()
+            if _direct_capture:
+                _direct_capture.stereo_command(None)
     if camera_command:
         if camera_command['active'] and cfg.allow_viewport_control and _server.camera_lease_active() and area and region:
             try:
+                was_active = _tracked_camera.active
                 _tracked_camera.apply(camera_command,scene,area,region)
+                if not was_active and _direct_capture and _direct_capture.stereo_mm:
+                    _tracked_camera.saved[4]['render'] = _direct_capture.before_render
+                if _direct_capture:
+                    _direct_capture.stereo_command(camera_command)
             except (ValueError,ReferenceError,RuntimeError):
                 _tracked_camera.stop()
                 cfg.allow_viewport_control=False
                 _message='Camera sync stopped. Reopen the viewport and align again.'
         elif not camera_command['active']:
+            if _direct_capture:
+                _direct_capture.stereo_command(None)
             _tracked_camera.stop()
     return 0.008 if _tracked_camera.active else 0.025
 
 
 def tick():
-    global _last_frame, _message, _dirty_at
+    global _last_frame, _message, _dirty_at, _direct_capture
     if not _server:
         return None
     update_source_visibility(_server.source_hidden())
     scene = bpy.context.scene
     cfg = scene.pico_bridge
+    if _direct_capture:
+        error = _direct_capture.poll()
+        if error:
+            _message = error
+            _direct_capture = None
     area, region = _display.target() if _display else (None, None)
     if _display:
         _display.update(time.monotonic() - _server.last_client < 3)
@@ -282,9 +306,14 @@ def tick():
     if area and region:
         window = next((w for w in bpy.context.window_manager.windows if area in w.screen.areas[:]), None)
         if window:
-            capture_viewport = viewport_capture(window.width, window.height,
+            capture_viewport = viewport_crop(window.width, window.height,
                 (region.x,region.y,region.width,region.height),
                 [(r.type,r.x,r.y,r.width,r.height) for r in area.regions])
+            if _direct_capture and _direct_capture.running and _direct_capture.last_size:
+                # Encoder rounding must not alter the physical camera/window aspect.
+                width, height = region.width, region.height
+                capture_viewport = {"x": region.x, "y": region.y, "width": width, "height": height,
+                    "windowWidth": window.width, "windowHeight": window.height, "crop": [0, 0, 1, 1]}
     _server.publish_state({"frame": scene.frame_current, "frameStart": scene.frame_start,
                            "frameEnd": scene.frame_end, "fps": fps, "playing": playing,
                            "timeSeconds": (scene.frame_current - _clip_start) / _clip_fps,
@@ -292,7 +321,8 @@ def tick():
                            "viewport": view_state, "viewportControlEnabled": bool(cfg.allow_viewport_control and viewport and viewport.view_perspective != 'CAMERA'),
                            "cameraSyncVersion": 1, "cameraControlEnabled": bool(cfg.allow_viewport_control and viewport),
                            "cameraSyncActive": _tracked_camera.active,
-                           "renderStreamVersion": 1, "captureViewport": capture_viewport,
+                           "renderStreamVersion": 3, "captureViewport": capture_viewport,
+                           "renderStereoEyeSeparationMm": _direct_capture.stereo_mm if _direct_capture else 0,
                            "calibrationBoard": _display.board if _display else None,
                            "sentAtUnixMs": time.time_ns() // 1000000})
     if cfg.auto_export and _dirty_at and not _source_visibility and not playing and time.monotonic() - _dirty_at > 0.75:
@@ -351,7 +381,10 @@ def start_bridge():
 
 
 def stop_bridge():
-    global _server, _message, _display
+    global _server, _message, _display, _direct_capture
+    if _direct_capture:
+        _direct_capture.stop()
+        _direct_capture = None
     restore_source_visibility()
     update_capture_view()
     _tracked_camera.stop()
@@ -378,6 +411,35 @@ def pairing_route_changed(_self, _context):
     if _display and _server:
         _display.set_payload(pairing_payload(pairing_endpoint(), settings().token, _server.session))
         _display.update(time.monotonic() - _server.last_client < 3)
+
+
+class PicoBridgePreferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+    worker_python: bpy.props.StringProperty(name="Render worker Python", subtype="FILE_PATH", default="")
+    stream_size: bpy.props.IntProperty(name="Stream maximum side", default=960, min=128, max=1280)
+    stream_shading: bpy.props.EnumProperty(name="Stream appearance",items=[
+        ("RENDERED","Scene renderer","Use the selected Cycles, Eevee or Workbench renderer"),
+        ("SOLID","Solid","Stream the viewport's Solid shading, studio light, colour and cavity settings"),
+        ("MATERIAL","Material Preview","Stream material-preview lighting; requires Cycles or Eevee selected"),
+        ("WIREFRAME","Wireframe","Stream geometry wireframes with a transparent background")],default="RENDERED")
+    stream_stereo: bpy.props.EnumProperty(name="Stream views", items=[("MONO","Mono","One view for both eyes"),
+        ("STEREO","Stereo (manual IPD)","Distinct eye views; uses explicitly confirmed manual eye separation")], default="MONO")
+    stream_ipd_mm: bpy.props.FloatProperty(name="Manual eye separation (mm)",default=64.0,min=40.0,max=80.0,precision=1,
+        update=lambda self,context: setattr(self,"stream_ipd_confirmed",False))
+    stream_ipd_confirmed: bpy.props.BoolProperty(name="Use this manually entered eye separation",default=False)
+    stream_fps: bpy.props.IntProperty(name="Stream frames per second", default=15, min=1, max=30)
+
+    def draw(self, context):
+        self.layout.label(text="Direct viewport streaming needs the optional Python encoder environment.")
+        self.layout.label(text="Run tools/setup_render_worker.py from the bridge repository once.")
+        self.layout.prop(self, "worker_python")
+        self.layout.prop(self, "stream_size")
+        self.layout.prop(self, "stream_fps")
+        self.layout.prop(self, "stream_shading")
+        self.layout.prop(self, "stream_stereo")
+        if self.stream_stereo == "STEREO":
+            self.layout.prop(self,"stream_ipd_mm")
+            self.layout.prop(self,"stream_ipd_confirmed")
 
 
 class PicoBridgeSettings(bpy.types.PropertyGroup):
@@ -500,14 +562,38 @@ def lan_address():
 
 class PICO_BRIDGE_OT_render_window(bpy.types.Operator):
     bl_idname = "pico_bridge.render_window"
-    bl_label = "Share render window"
-    bl_description = "Open the local WebRTC publisher, then choose the Blender window to share"
+    bl_label = "Start viewport stream"
+    bl_description = "Stream the scene renderer, Solid, Material Preview or Wireframe directly from Blender"
 
     def execute(self, context):
+        global _direct_capture, _message
         if not _server:
             self.report({'WARNING'}, "Start the bridge first")
             return {'CANCELLED'}
-        bpy.ops.wm.url_open(url=f"http://127.0.0.1:{_server.port}/render#token={_server.token}")
+        if _direct_capture:
+            _direct_capture.stop()
+            _direct_capture = None
+            _message = "Direct viewport stream stopped"
+            return {'FINISHED'}
+        area, region = _display.target() if _display else (None, None)
+        if not area or not region:
+            self.report({'WARNING'}, "Open a Blender 3D viewport first")
+            return {'CANCELLED'}
+        window = next((w for w in context.window_manager.windows if area in w.screen.areas[:]), None)
+        prefs = context.preferences.addons[__package__].preferences
+        if prefs.stream_stereo == "STEREO" and not prefs.stream_ipd_confirmed:
+            self.report({'ERROR'}, "Enter and confirm your manual eye separation before starting stereo")
+            return {'CANCELLED'}
+        try:
+            _direct_capture = DirectViewportCapture(area, window, _server, scoped_objects,
+                prefs.worker_python or default_worker_python(), prefs.stream_fps, prefs.stream_size,
+                isolate_source=lambda: settings().scope != "VISIBLE",
+                stereo_mm=prefs.stream_ipd_mm if prefs.stream_stereo == "STEREO" else 0,
+                shading=prefs.stream_shading)
+            _message = "Direct " + _direct_capture.engine + " stream starting"
+        except Exception as error:
+            self.report({'ERROR'}, str(error))
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 
@@ -539,7 +625,20 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
                 layout.operator('pico_bridge.center_marker_only', text='Show all markers' if _display.center_only else 'Center reference only')
             layout.prop(cfg, 'allow_viewport_control')
             layout.prop(cfg, "token")
-            layout.operator("pico_bridge.render_window")
+            prefs = context.preferences.addons[__package__].preferences
+            if not _direct_capture:
+                layout.prop(prefs,"stream_shading")
+                if prefs.stream_shading == "MATERIAL" and context.scene.render.engine == "BLENDER_WORKBENCH":
+                    layout.label(text="Material Preview needs Cycles or Eevee",icon='INFO')
+                layout.prop(prefs,"stream_stereo")
+                if prefs.stream_stereo == "STEREO":
+                    layout.prop(prefs,"stream_ipd_mm")
+                    layout.prop(prefs,"stream_ipd_confirmed")
+            layout.operator("pico_bridge.render_window", text="Stop viewport stream" if _direct_capture else "Start viewport stream")
+            if _direct_capture and _direct_capture.running:
+                if _direct_capture.stereo_mm:
+                    layout.label(text=f"Stereo · manual {_direct_capture.stereo_mm:.1f} mm")
+                layout.label(text=_direct_capture.label + " · alpha")
             layout.operator("pico_bridge.copy_pairing")
             layout.operator("pico_bridge.refresh")
             layout.operator("pico_bridge.stop")
@@ -552,8 +651,18 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
         layout.label(text="Use image textures + Principled BSDF")
 
 
-CLASSES = (PicoBridgeSettings, PICO_BRIDGE_OT_start, PICO_BRIDGE_OT_stop,
+CLASSES = (PicoBridgePreferences, PicoBridgeSettings, PICO_BRIDGE_OT_start, PICO_BRIDGE_OT_stop,
            PICO_BRIDGE_OT_refresh, PICO_BRIDGE_OT_pairing, PICO_BRIDGE_OT_board, PICO_BRIDGE_OT_qr, PICO_BRIDGE_OT_center_markers, PICO_BRIDGE_OT_render_window, PICO_BRIDGE_PT_panel)
+
+
+@persistent
+def before_save(_unused):
+    # Saving a .blend must not bake temporary Film/camera-ray isolation into the scene.
+    global _direct_capture, _message
+    if _direct_capture:
+        _direct_capture.stop()
+        _direct_capture = None
+        _message = "Stream stopped for save; scene settings restored"
 
 
 def register():
@@ -562,6 +671,7 @@ def register():
     bpy.types.Scene.pico_bridge = bpy.props.PointerProperty(type=PicoBridgeSettings)
     bpy.app.handlers.depsgraph_update_post.append(changed)
     bpy.app.handlers.load_pre.append(loaded)
+    bpy.app.handlers.save_pre.append(before_save)
 
 
 def unregister():
@@ -569,7 +679,8 @@ def unregister():
     if bpy.app.timers.is_registered(auto_start_once):
         bpy.app.timers.unregister(auto_start_once)
     for handlers, callback in ((bpy.app.handlers.depsgraph_update_post, changed),
-                               (bpy.app.handlers.load_pre, loaded)):
+                               (bpy.app.handlers.load_pre, loaded),
+                               (bpy.app.handlers.save_pre, before_save)):
         if callback in handlers:
             handlers.remove(callback)
     del bpy.types.Scene.pico_bridge

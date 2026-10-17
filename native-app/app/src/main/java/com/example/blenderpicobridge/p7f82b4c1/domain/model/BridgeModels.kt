@@ -10,7 +10,7 @@ data class ViewportDelta(val pan: List<Float> = listOf(0f,0f,0f), val rotation: 
 data class ViewportFrame(val pivot: List<Float>, val distance: Float)
 /** Absolute camera in exported glTF Y-up coordinates; slopes are l/r/b/t at unit depth. */
 data class TrackedViewportCamera(val position: List<Float>,val rotation: List<Float>,val slopes: List<Float>,
-    val near: Float,val far: Float)
+    val near: Float,val far: Float,val eyes: List<TrackedViewportCamera> = emptyList())
 enum class ScanPurpose { PAIRING, DEPTH, MARKER_POSE }
 sealed interface ScanUpdate {
     data class Status(val text: String) : ScanUpdate
@@ -37,6 +37,7 @@ data class FramePacket(
     val board: CalibrationBoard? = null, val viewportControlEnabled: Boolean = false,
     val viewport: ViewportFrame? = null,
     val cameraSyncVersion: Int = 0,val cameraControlEnabled: Boolean = false,
+    val renderStereoEyeSeparationMm: Float=0f,
     val renderStreamVersion: Int=0,val renderAspect: Float=16f/9f,val renderCrop: List<Float> = listOf(0f,0f,1f,1f),
 )
 sealed interface BridgeUpdate {
@@ -46,7 +47,7 @@ sealed interface BridgeUpdate {
 }
 data class SceneFeed(val file: File? = null, val packet: FramePacket? = null, val reset: Int = 0,
     val mode: InspectionMode = InspectionMode.SCALE, val explosion: Float = 0f,
-    val hideSource: Boolean = true, val hover: Boolean = false, val monitor: MonitorCalibration = MonitorCalibration(),
+    val modelVisible: Boolean = true, val hideSource: Boolean = true, val hover: Boolean = false, val monitor: MonitorCalibration = MonitorCalibration(),
     val command: SceneCommand = SceneCommand.NONE, val commandSequence: Int = 0,
     val previewPose: InspectionPose? = null, val roomPose: InspectionPose? = null, val debugReveal: Float? = null,
     val linkViewport: Boolean = false, val touchAlignment: TouchAlignmentRequest? = null,

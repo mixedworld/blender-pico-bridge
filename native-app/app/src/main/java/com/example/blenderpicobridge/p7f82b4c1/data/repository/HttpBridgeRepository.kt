@@ -129,7 +129,10 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         val started = System.nanoTime()
         val body=JSONObject().put("session",session).put("revision",revision).put("stream",stream).put("sequence",sequence).put("active",camera!=null)
         camera?.let { body.put("position",JSONArray(it.position)).put("rotation",JSONArray(it.rotation))
-            .put("slopes",JSONArray(it.slopes)).put("near",it.near).put("far",it.far) }
+            .put("slopes",JSONArray(it.slopes)).put("near",it.near).put("far",it.far)
+            if(it.eyes.isNotEmpty()) body.put("eyes",JSONArray(it.eyes.map { eye -> JSONObject()
+                .put("position",JSONArray(eye.position)).put("rotation",JSONArray(eye.rotation))
+                .put("slopes",JSONArray(eye.slopes)).put("near",eye.near).put("far",eye.far) })) }
         val connection=URI(pairing.endpoint+"/v1/view-camera").toURL().openConnection() as HttpURLConnection
         try {
             connection.requestMethod="POST";connection.doOutput=true;connection.connectTimeout=1000;connection.readTimeout=1000
@@ -207,6 +210,7 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
             json.optJSONArray("viewQuaternion")?.values(4), json.optBoolean("sourceHidden", false),
             board, json.optBoolean("viewportControlEnabled", false),viewport,
             json.optInt("cameraSyncVersion",0),json.optBoolean("cameraControlEnabled",false),
+            json.optDouble("renderStereoEyeSeparationMm",0.0).toFloat().also { require(it==0f || it in 40f..80f) },
             json.optInt("renderStreamVersion",0),
             json.optJSONObject("captureViewport")?.let { it.getDouble("width").toFloat()/it.getDouble("height").toFloat() }?.takeIf { it.isFinite() && it in .1f..10f } ?: (16f/9f),
             json.optJSONObject("captureViewport")?.optJSONArray("crop")?.values(4) ?: listOf(0f,0f,1f,1f),

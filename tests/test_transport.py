@@ -160,3 +160,15 @@ class TransportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class StereoCameraValidationTest(unittest.TestCase):
+    def command(self):
+        eye=dict(position=[-.032,0,1],rotation=[0,0,0,1],slopes=[-.4,.5,-.2,.2],near=.01,far=1000)
+        return dict(session='session',stream='stereo',sequence=1,revision='a'*64,active=True,
+                    **eye,eyes=[eye,dict(eye,position=[.032,0,1])])
+    def test_accepts_two_distinct_eye_cameras(self):
+        module.BridgeServer.validate_view_camera(self.command())
+    def test_rejects_partial_nested_or_nonfinite_eye_rigs(self):
+        for change in ([{}], [dict(self.command()['eyes'][0],eyes=[])],
+                       [dict(self.command()['eyes'][0],near=float('nan')),self.command()['eyes'][1]]):
+            with self.assertRaises(ValueError):module.BridgeServer.validate_view_camera(dict(self.command(),eyes=change))

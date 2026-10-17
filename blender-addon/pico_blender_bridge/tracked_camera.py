@@ -1,5 +1,6 @@
 """Main-thread-only temporary Blender camera for a tracked physical-screen window."""
 import math
+import time
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
@@ -9,6 +10,7 @@ class TrackedCamera:
         self.saved = None
         self.object = None
         self.stream = None
+        self.last_update = 0.0
 
     @property
     def active(self):
@@ -47,13 +49,13 @@ class TrackedCamera:
         view.view_camera_zoom = 50.0*(2.0-math.sqrt(2.0))
 
     def apply(self, command, scene, area, region):
-        if not self.active or self.stream != command['stream']:
+        if not self.active:
             self.start(scene, area, command['stream'])
+        else:
+            self.stream = command['stream']  # Rebind without restoring/re-saving the viewport.
         if self.saved[1] != area:
             raise ValueError('Tracked viewport changed')
         dimensions=(region.width,region.height)
-        if self.saved[4]['region'] not in (None,dimensions):
-            raise ValueError('Viewport resized')
         self.saved[4]['region']=dimensions
         # glTF Y-up -> Blender Z-up. Camera-local axes remain +Y up, -Z forward.
         basis = Matrix.Rotation(math.pi/2, 4, 'X')
@@ -72,6 +74,7 @@ class TrackedCamera:
             render.resolution_x, render.resolution_y = region.width, region.height
             render.resolution_percentage = 100
             render.pixel_aspect_x = render.pixel_aspect_y = 1.0
+        self.last_update = time.monotonic()
         area.tag_redraw()
 
     def stop(self):

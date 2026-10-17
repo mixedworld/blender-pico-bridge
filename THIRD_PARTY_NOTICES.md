@@ -18,3 +18,13 @@ The [MIT license](LICENSE) covers original bridge code and project documentation
 The small occlusion material/scene is original project-authored content exported by PICO Spatial Editor. It retains PICO-generated metadata and honest unmanaged-export provenance. No vendor emulator, runtime SDK installation or Editor binaries are vendored in this repository.
 
 The private workspace used additional scenes for experiments. **BMW models, model adaptations, their renders, downloaded robot assets, exported GLBs and headset room recordings are excluded from this repository and from the release packaging allowlist.** They must not be added under this MIT license. If a future demo uses an external asset, document its author, source, exact license and redistribution requirements separately.
+
+## Optional direct-render worker (installed separately)
+
+The setup helper downloads these packages into a user-local virtual environment; they are not bundled into the add-on or APK. Their own licenses continue to apply:
+
+- [aiortc 1.14.0](https://github.com/aiortc/aiortc) — BSD-3-Clause; includes separately licensed dependencies such as aioice, cryptography, pylibsrtp and pyee.
+- [PyAV 16.1.0](https://github.com/PyAV-Org/PyAV) — BSD-3-Clause bindings. Its binary wheels include FFmpeg libraries with their own LGPL/GPL configuration and notices; consult the installed wheel's license metadata before redistributing a worker environment.
+- [NumPy](https://numpy.org/doc/stable/license.html) — BSD-3-Clause and bundled dependency notices.
+
+No NVIDIA CloudXR SDK or Apple HEVC-alpha codec is bundled by this implementation.
