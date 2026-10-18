@@ -5,6 +5,7 @@ import com.example.blenderpicobridge.p7f82b4c1.domain.model.*
 import java.net.URI
 
 class ConnectBridgeUseCase(private val repository: BridgeRepository) {
+    fun forgetToken(endpoint: String) = repository.savePairing(Pairing(endpoint,""))
     fun validate(pairing: Pairing): Pairing {
         val uri = runCatching { URI(pairing.endpoint.trim()) }.getOrElse { throw IllegalArgumentException("Enter the Blender bridge HTTP URL") }
         require(uri.scheme in setOf("http", "https") && !uri.host.isNullOrBlank() && uri.userInfo == null &&

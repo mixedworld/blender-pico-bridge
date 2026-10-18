@@ -81,6 +81,7 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
         val restart=retry!=state.retry || pairing!=nextPairing
         reset=state.reset;retry=state.retry;pairing=nextPairing
         enabled=state.enabled
+        bars.forEach { it.enabled=state.borderVisible }
         locked=state.locked
         if(state.mode==RenderWindowMode.LIVE_DISPLAY) setProjectionValid(true)
         anchor.enabled=enabled && active && initialized

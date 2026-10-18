@@ -24,7 +24,9 @@ import com.example.blenderpicobridge.p7f82b4c1.domain.model.TouchAlignmentReques
 
 @Composable
 fun BridgeScene(feed: StateFlowHolder, modifier: Modifier, event: (BridgeUiEvent) -> Unit, room: Boolean = false,
-    renderVideo: com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase? = null, tools: (@Composable () -> Unit)? = null) {
+    renderVideo: com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase? = null, tools: (@Composable () -> Unit)? = null,
+    palmTools: (@Composable () -> Unit)? = null,
+    alignment: com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ManageAlignmentUseCase? = null) {
     val runtime = remember { BridgeSceneRuntime(event, room, renderVideo) }
     var attached by remember { mutableStateOf(false) }
     val hmd = remember(room) { if (room) HMDTrackingProvider() else null }
@@ -39,7 +41,9 @@ fun BridgeScene(feed: StateFlowHolder, modifier: Modifier, event: (BridgeUiEvent
     }
     val touch by remember(feed) { feed.flow.map { it.touchAlignment }.distinctUntilChanged() }.collectAsState(initial=null)
     TouchTrackingEffect(touch,room,attached,runtime,feed,event)
-    PersistentAlignmentEffect(room,attached,runtime,feed,event)
+    val palmEnabled by remember(feed) {feed.flow.map{it.palmTools && it.touchAlignment==null}.distinctUntilChanged()}.collectAsState(initial=false)
+    PalmToolsEffect(palmEnabled && room,attached,runtime,event)
+    if(alignment!=null)PersistentAlignmentEffect(room,attached,runtime,feed,event,alignment)
     val editing by remember(feed) { feed.flow.map { it.monitor.editing }.distinctUntilChanged() }.collectAsState(initial=false)
     val context = LocalContext.current
     DisposableEffect(runtime) { onDispose { runtime.close() } }
@@ -68,11 +72,13 @@ fun BridgeScene(feed: StateFlowHolder, modifier: Modifier, event: (BridgeUiEvent
         runtime.attach(content)
         attachments.entity("room-tools")?.let {
             it.components[TransformComponent::class.java]!!.position = Vector3(.7f, 1.05f, -1f)
-            runtime.tools = it; content.addEntity(it)
+            runtime.attachTools(it)
         }
+        attachments.entity("palm-tools")?.let(runtime::attachPalm)
         attached = true
-    }, update = { _, _ -> runtime.measure() }, attachments = {
+    }, update = { _, _ -> runtime.measure();runtime.measureTools() }, attachments = {
         if (tools != null) AttachmentPanel("room-tools") { tools() }
+        if(palmTools!=null)AttachmentPanel("palm-tools"){palmTools()}
     })
     LaunchedEffect(attached) {
         if (attached) feed.flow.collect { value ->

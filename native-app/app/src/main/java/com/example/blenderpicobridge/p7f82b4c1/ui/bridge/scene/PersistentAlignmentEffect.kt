@@ -9,7 +9,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.blenderpicobridge.p7f82b4c1.data.repository.PersistentAlignmentRepository
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ManageAlignmentUseCase
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.BridgeUiEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
@@ -19,10 +19,9 @@ import kotlinx.coroutines.flow.map
 /** Full Space only. Permission, subscription and coroutine belong to the Room composition. */
 @Composable
 internal fun PersistentAlignmentEffect(room: Boolean,attached: Boolean,runtime: BridgeSceneRuntime,
-    feed: StateFlowHolder,event: (BridgeUiEvent)->Unit) {
+    feed: StateFlowHolder,event: (BridgeUiEvent)->Unit,repository: ManageAlignmentUseCase) {
     if(!room) return
     val context=LocalContext.current
-    val repository=remember(context.applicationContext) { PersistentAlignmentRepository(context.applicationContext) }
     val permission="com.picovr.permission.SPATIAL_DATA"
     var granted by remember { mutableStateOf(context.checkSelfPermission(permission)==PackageManager.PERMISSION_GRANTED) }
     val save by remember(feed) { feed.flow.map { it.alignmentSave }.distinctUntilChanged() }.collectAsState(initial=null)
@@ -59,19 +58,19 @@ internal fun PersistentAlignmentEffect(room: Boolean,attached: Boolean,runtime: 
                     runtime.detachAlignmentAnchor()
                     repository.save(snapshot)
                 }
-                val saved=created?.saved ?: repository.read() ?: return@collectLatest
+                val saved=created ?: repository.read() ?: return@collectLatest
                 val restoring=created==null
                 if(restoring) event(BridgeUiEvent.AlignmentLocating)
                 var first=true
-                repository.track(saved,created?.anchor).collect { update ->
+                repository.track(saved).collect { update ->
                     when(update) {
-                        is PersistentAlignmentRepository.Update.Status -> event(BridgeUiEvent.Feedback(update.message))
-                        PersistentAlignmentRepository.Update.Removed -> {
+                        is ManageAlignmentUseCase.Update.Status -> event(BridgeUiEvent.Feedback(update.message))
+                        ManageAlignmentUseCase.Update.Removed -> {
                             runtime.detachAlignmentAnchor();event(BridgeUiEvent.AlignmentLocating)
                             event(BridgeUiEvent.Feedback("Saved room anchor was removed. Choose Align viewport and lock a new alignment."))
                         }
-                        is PersistentAlignmentRepository.Update.Located -> {
-                            runtime.anchoredAlignment(saved,PersistentAlignmentRepository.pose(update.anchor),restoring && first)
+                        is ManageAlignmentUseCase.Update.Located -> {
+                            runtime.anchoredAlignment(saved,update.pose,restoring && first)
                             if(first) event(BridgeUiEvent.Feedback(if(restoring) "Viewport frame and curvature restored from the room anchor."
                                 else "Viewport frame and curvature saved. Look around nearby to help PICO recognize it next time."))
                             first=false

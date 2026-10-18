@@ -45,8 +45,10 @@ class BridgeViewModelTest {
         assertEquals("disconnected", model.state.value.phase)
         assertFalse(model.state.value.hasModel)
     }
-    @Test fun connectionStartsScanningAndManualOrCollapseStopsIt() {
+    @Test fun connectionOpensWithoutStartingCameraAndExplicitScanCanBeStopped() {
         model.onEvent(BridgeUiEvent.ConnectionPanelChanged(true))
+        assertNull(model.state.value.scanPurpose)
+        model.onEvent(BridgeUiEvent.ScanRequested(ScanPurpose.PAIRING))
         assertEquals(ScanPurpose.PAIRING,model.state.value.scanPurpose)
         assertFalse(model.state.value.manualConnection)
         model.onEvent(BridgeUiEvent.ManualConnection)
@@ -80,8 +82,9 @@ class BridgeViewModelTest {
         assertEquals(60, model.state.value.frame)
         assertEquals("live", model.state.value.phase)
         model.onEvent(BridgeUiEvent.Disconnect)
-        assertTrue(model.state.value.hasModel)
-        assertEquals(packet, model.scene.value.packet)
+        assertFalse(model.state.value.hasModel)
+        assertNull(model.scene.value.packet)
+        assertTrue(model.state.value.connectionPanel)
     }
     @Test fun invalidPairingDoesNotStartConnection() {
         model.onEvent(BridgeUiEvent.EndpointChanged("file:///tmp"))
@@ -97,7 +100,10 @@ class BridgeViewModelTest {
         assertNull(model.scene.value.file)
     }
     @Test fun refreshAndResetRetainAuthoredPoseWhileResettingInspection() = runTest(dispatcher) {
-        model.onEvent(BridgeUiEvent.ModelReady("a".repeat(64), .1f))
+        model.onEvent(BridgeUiEvent.Connect);runCurrent()
+        val packet=FramePacket("s",4,"a".repeat(64),null,"Model",1,false,0f,emptyList(),null,0,0)
+        repository.events.emit(BridgeUpdate.Model(packet,File("${packet.revision}.glb")));runCurrent()
+        model.onEvent(BridgeUiEvent.ModelReady(packet.revision!!,.1f))
         model.onEvent(BridgeUiEvent.InspectionChanged(2f))
         model.onEvent(BridgeUiEvent.Refresh); runCurrent()
         assertEquals("refreshing", model.state.value.phase)

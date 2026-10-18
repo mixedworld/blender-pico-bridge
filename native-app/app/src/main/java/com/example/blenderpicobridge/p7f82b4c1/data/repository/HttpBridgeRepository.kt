@@ -30,7 +30,11 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         while (currentCoroutineContext().isActive) {
             try {
                 val packet = decode(JSONObject(String(request(pairing, "/v1/state", 4 * 1024 * 1024))))
-                require(pairing.expectedSession == null || pairing.expectedSession == packet.session) { "Pairing QR expired. Scan the current Blender QR." }
+                if ((pairing.expectedSession != null && pairing.expectedSession != packet.session) ||
+                    (session.isNotBlank() && session != packet.session)) {
+                    emit(BridgeUpdate.Status("disconnected", "Blender session changed. Scan its current QR.", pairingRejected=true))
+                    return@flow
+                }
                 if (packet.session != session) {
                     session = packet.session
                     sequence = -1
@@ -65,7 +69,9 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                emit(BridgeUpdate.Status(if (receivedModel) "stale" else "error", if (error is java.io.IOException) "Blender connection lost · retrying…" else error.message ?: "Connection unavailable"))
+                val rejected=error is PairingRejectedException
+                emit(BridgeUpdate.Status(if (rejected) "disconnected" else if (receivedModel) "stale" else "error", if (error is java.io.IOException) "Blender connection lost · retrying…" else error.message ?: "Connection unavailable",pairingRejected=rejected))
+                if(rejected)return@flow
                 delay(1500)
             }
         }
@@ -93,7 +99,8 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         connection.setRequestProperty("Authorization", "Bearer ${pairing.token}")
         try {
             val code = connection.responseCode
-            check(code == 200) { if (code == 401) "Pairing token rejected" else "Blender bridge returned HTTP $code" }
+            if(code==401 || code==403)throw PairingRejectedException()
+            check(code == 200) { "Blender bridge returned HTTP $code" }
             require(connection.contentLengthLong <= limit) { "Model is too large (limit ${limit / 1048576} MB)" }
             connection.inputStream.use { input ->
                 val output = java.io.ByteArrayOutputStream()
@@ -110,6 +117,8 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
             connection.disconnect()
         }
     }
+
+    private class PairingRejectedException : IllegalStateException("Pairing token rejected. Scan Blender’s current QR.")
 
     override suspend fun viewportDelta(pairing: Pairing, session: String, requestId: String, delta: ViewportDelta): Unit = withContext(Dispatchers.IO) {
         val body = JSONObject().put("session",session).put("requestId",requestId)

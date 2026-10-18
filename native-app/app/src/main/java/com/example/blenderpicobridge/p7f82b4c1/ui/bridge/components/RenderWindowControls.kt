@@ -11,7 +11,6 @@ import com.pico.spatial.ui.design.*
 /** In-place tools group; the video itself is an independent scene Entity. */
 @Composable
 internal fun RenderWindowControls(state: BridgeUiState,event: (BridgeUiEvent)->Unit) {
-    Body("Render window")
     ListItem(headlineContent={ Text("Show render window") },trailingContent={
         Switch(checked=state.renderWindow.enabled,onCheckedChange={ event(BridgeUiEvent.RenderEnabled(it)) },
             enabled=state.hasModel && state.renderAvailable)
@@ -35,6 +34,11 @@ internal fun RenderWindowControls(state: BridgeUiState,event: (BridgeUiEvent)->U
         Switch(checked=state.renderWindow.fitModel,onCheckedChange={ event(BridgeUiEvent.RenderFitModel(it)) },
             enabled=state.renderWindow.enabled && state.renderWindow.faceUser && state.renderWindow.mode==RenderWindowMode.SCENE_ALIGNED)
     })
+    ListItem(headlineContent={Text("Hide render border")},supportingContent={
+        Text(if(state.renderWindow.hideBorder==null) "Automatic · hidden with Face user + Fit" else "Your override · border grabs still work when unlocked")
+    },trailingContent={Switch(checked=!state.renderWindow.borderVisible,
+        onCheckedChange={event(BridgeUiEvent.RenderHideBorder(it))},enabled=state.renderWindow.enabled)})
+    if(state.renderWindow.hideBorder!=null) Button(onClick={event(BridgeUiEvent.RenderHideBorder(null))}) {Text("Use automatic border")}
     ListItem(headlineContent={ Text("Lock render window") },trailingContent={
         Switch(checked=state.renderWindow.locked,onCheckedChange={ event(BridgeUiEvent.RenderLocked(it)) },
             enabled=state.renderWindow.enabled)

@@ -3,6 +3,7 @@ package com.example.blenderpicobridge.p7f82b4c1.ui.bridge.scene
 import android.util.Log
 import android.os.SystemClock
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.BuildMonitorCameraUseCase
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.BuildRenderBillboardUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.CurvedScreenUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.*
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.InspectionMode
@@ -76,6 +77,41 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private var pendingAnchoredPose: Pair<String?,InspectionPose?>? = null
     private var collisionKey = emptyList<Float>()
     var tools: Entity? = null
+    var palm: Entity? = null
+    private var toolsPicking: ToolsLauncherPicking?=null
+    private var toolsReset=-1
+    private var recenterTools=false
+    private var headAt=0L
+    fun attachTools(entity: Entity) {
+        tools=entity;placementOwner.addChild(entity)
+        toolsPicking=ToolsLauncherPicking(entity)
+    }
+    fun measureTools() = toolsPicking?.measure()
+    fun attachPalm(entity: Entity) {palm=entity;placementOwner.addChild(entity);entity.enabled=false}
+    fun toolsHead(): Pair<List<Float>,List<Float>>? {
+        if(android.os.SystemClock.elapsedRealtime()-headAt>300)return null
+        val head=headPosition ?: return null
+        val forward=headRotation?.rotateVector(Vector3(0f,0f,-1f)) ?: return null
+        return head.values() to forward.values()
+    }
+    fun palmTools(position: List<Float>?) {
+        val entity=palm ?: return
+        val head=toolsHead()?.first
+        if(position==null || head==null){entity.enabled=false;return}
+        val q=BuildRenderBillboardUseCase().facing(head,position) ?: run {entity.enabled=false;return}
+        entity.components[TransformComponent::class.java]!!.apply {
+            this.position=placementOwner.convertPositionFrom(position.vector(),null)
+            quaternion=placementOwner.convertRotationFrom(q.quat(),null)
+        }
+        entity.enabled=true
+    }
+    private fun placeTools(position: Vector3,rotation: Quat) {
+        tools?.components?.get(TransformComponent::class.java)?.apply {
+            this.position=placementOwner.convertPositionFrom(position+rotation.rotateVector(Vector3(.45f,-.25f,-.85f)),null)
+            quaternion=placementOwner.convertRotationFrom(rotation,null)
+        }
+        recenterTools=false
+    }
     private var revision: String? = null
     private var sequence = -1L
     private var half = Vector3.ZERO
@@ -109,7 +145,8 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     /** Place once from a valid tracked viewer; afterwards the scene stays world locked. */
     fun placeForViewer(position: Vector3, rotation: Quat) {
         if(room) {
-            headPosition=position;headRotation=rotation
+            headPosition=position;headRotation=rotation;headAt=android.os.SystemClock.elapsedRealtime()
+            if(recenterTools)placeTools(position,rotation)
             renderWindow?.ensurePlaced(calibration,position,rotation)
             if(!linkedViewport) updateRenderFollowing()
         }
@@ -118,10 +155,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         homePosition = placementOwner.convertPositionFrom(position + rotation.rotateVector(Vector3(0f, -.2f, -1.5f)), null)
         homeRotation = placementOwner.convertRotationFrom(rotation, null)
         if (!restored) { transform.position = homePosition; transform.quaternion = homeRotation }
-        tools?.components?.get(TransformComponent::class.java)?.apply {
-            this.position = placementOwner.convertPositionFrom(position + rotation.rotateVector(Vector3(.7f, -.3f, -1f)), null)
-            quaternion = homeRotation
-        }
+        placeTools(position,rotation)
         if (!restored) {
             val monitorPosition = placementOwner.convertPositionFrom(position + rotation.rotateVector(Vector3(0f, -.2f, -1f)), null)
             event(BridgeUiEvent.MonitorPose(monitorPosition.values(), homeRotation.values()))
@@ -445,7 +479,6 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     fun beginGesture() = gestureContinuity.rebase()
 
     fun manipulate(value: SpatialTransformValue) {
-        if (model == null) return
         val target=value.targetEntity ?: return
         if(!accepts(target)) return
         Log.i("BlenderBridge", "HAND_TRANSFORM drag=${value.dragAmount} scale=${value.scaleValue} rotation=${value.rotation}")
@@ -464,12 +497,15 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             Log.i("BlenderBridge", "HAND_REBASE skipped discontinuous or transition sample")
             return
         }
-        if(renderWindow?.owns(target)==true) {
-            renderWindow?.manipulate(moved-origin,rotation,value.scaleValue)
+        if(toolsPicking?.owns(target)==true) {
+            tools?.components?.get(TransformComponent::class.java)?.apply {
+                position=position+placementOwner.convertPositionFrom(moved,null)-placementOwner.convertPositionFrom(origin,null)
+            }
             return
         }
-        if (value.targetEntity == tools) {
-            tools?.components?.get(TransformComponent::class.java)?.apply { position = position + moved - origin; quaternion = rotation * quaternion }
+        if(model==null)return
+        if(renderWindow?.owns(target)==true) {
+            renderWindow?.manipulate(moved-origin,rotation,value.scaleValue)
             return
         }
         monitorHandles?.index(value.targetEntity)?.let { index ->
@@ -520,7 +556,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     }
 
     fun accepts(entity: Entity): Boolean {
-        if (entity == tools) return true
+        if (toolsPicking?.owns(entity)==true) return true
         if(renderWindow?.owns(entity)==true)return true
         if(monitorHandles?.index(entity)!=null) return true
         if (monitor?.owns(entity)==true) return calibration.editing && !manualHandles
@@ -531,6 +567,11 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     }
 
     fun preferences(feed: SceneFeed) {
+        toolsPicking?.measure()
+        if(toolsReset!=feed.toolsReset) {
+            toolsReset=feed.toolsReset;recenterTools=true
+            if(headPosition!=null && headRotation!=null)placeTools(headPosition!!,headRotation!!)
+        }
         val seedRenderCamera=room && feed.linkViewport &&
             (!linkedViewport || renderState!=feed.renderWindow)
         renderState=feed.renderWindow
@@ -734,6 +775,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     }
 
     fun close() {
+        toolsPicking?.close();toolsPicking=null;palm=null;tools=null
         renderWindow?.close();renderWindow=null
         if (model != null) savePose()
         monitorHandles?.close();monitorHandles=null

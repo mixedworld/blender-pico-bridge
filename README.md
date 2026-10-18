@@ -4,7 +4,7 @@ Bring Blender models into a spatial room in the PICO Emulator. The Blender add-o
 
 ![Bridge architecture](docs/assets/bridge-overview.svg)
 
-**v0.7.0 · Development preview · MIT · Emulator-first**
+**v0.8.0 · Development preview · MIT · Emulator-first**
 
 [Install & run](#install-and-run) · [First Blender Cube in Room](#4-run-your-first-blender-cube-in-room-mode) · [Render streaming](#optional-render-window) · [Experimental device setup](#experimental-running-on-a-compatible-device) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Build from source](docs/DEVELOPMENT.md)
 
@@ -17,7 +17,7 @@ The walkthrough below uses one computer for Blender and **PICO OS 6.1 Emulator**
 | Blender | Run the add-on and publish your scene | [Blender download](https://www.blender.org/download/) · tested with **5.2.2 LTS** |
 | PICO Emulator | Run the spatial viewer | **OS 6.1**; [Mac / Windows downloads below](#standalone-pico-emulator-downloads) |
 | Android Platform-Tools (`adb`) | Install the APK and connect the emulator to Blender | [Official macOS / Windows packages](https://developer.android.com/tools/releases/platform-tools) |
-| Bridge add-on ZIP + viewer APK | Install one on each end | [Download v0.7.0](https://github.com/mixedworld/blender-pico-bridge/releases/tag/v0.7.0) |
+| Bridge add-on ZIP + viewer APK | Install one on each end | [Download v0.8.0](https://github.com/mixedworld/blender-pico-bridge/releases/tag/v0.8.0) |
 
 You do **not** need Unity, PICO Connect, Blender MCP, an AI agent, Android Studio or a compiler to run the packaged bridge. An external **Python 3.10+** environment is needed only for optional render streaming. Building the APK from source additionally needs JDK 21 and Android SDK 35; see [development instructions](docs/DEVELOPMENT.md).
 
@@ -25,21 +25,21 @@ You do **not** need Unity, PICO Connect, Blender MCP, an AI agent, Android Studi
 
 ### 1. Download the bridge packages
 
-Download these files from the **same [v0.7.0 release](https://github.com/mixedworld/blender-pico-bridge/releases/tag/v0.7.0)**:
+Download these files from the **same [v0.8.0 release](https://github.com/mixedworld/blender-pico-bridge/releases/tag/v0.8.0)**:
 
-- [pico_blender_bridge-0.7.0.zip](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.7.0/pico_blender_bridge-0.7.0.zip) — Blender add-on. **Keep this ZIP zipped.**
-- [blender-pico-bridge-debug.apk](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.7.0/blender-pico-bridge-debug.apk) — PICO app, with ARM64 and x86-64 libraries.
-- [SHA256SUMS](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.7.0/SHA256SUMS) — file checksums.
-- [third-party-notices.zip](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.7.0/third-party-notices.zip) — dependency licenses.
+- [pico_blender_bridge-0.8.0.zip](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.8.0/pico_blender_bridge-0.8.0.zip) — Blender add-on. **Keep this ZIP zipped.**
+- [blender-pico-bridge-debug.apk](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.8.0/blender-pico-bridge-debug.apk) — PICO app, with ARM64 and x86-64 libraries.
+- [SHA256SUMS](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.8.0/SHA256SUMS) — file checksums.
+- [third-party-notices.zip](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.8.0/third-party-notices.zip) — dependency licenses.
 
-[render-worker-setup.zip](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.7.0/render-worker-setup.zip) is optional; the native Cube walkthrough does not need it. The APK is a debug-signed development build, not a store release.
+[render-worker-setup.zip](https://github.com/mixedworld/blender-pico-bridge/releases/download/v0.8.0/render-worker-setup.zip) is optional; the native Cube walkthrough does not need it. The APK is a debug-signed development build, not a store release.
 
 ### 2. Install the Blender add-on
 
 1. Open Blender.
 2. Go to **Edit → Preferences → Add-ons**.
 3. Open the menu at the top right of the Add-ons page and choose **Install from Disk…**.
-4. Choose `pico_blender_bridge-0.7.0.zip`, then enable **PICO Blender Bridge**. If upgrading, stop the existing bridge/stream first, install the new ZIP and restart Blender after saving your own work.
+4. Choose `pico_blender_bridge-0.8.0.zip`, then enable **PICO Blender Bridge**. If upgrading, stop the existing bridge/stream first, install the new ZIP and restart Blender after saving your own work.
 5. Close Preferences. Move the mouse into Blender’s **3D Viewport** and press **N** (or use **View → Sidebar**).
 6. Click the vertical **PICO Bridge** tab in that sidebar. The panel inside is called **PICO Blender Bridge**.
 
@@ -92,7 +92,7 @@ Blender may have a different PATH from Terminal. If needed, set **Edit → Prefe
 4. The bridge starts automatically if **Start when panel opens** is enabled. Otherwise click **Start Bridge**. If **Stop Bridge** is visible, it is already running. Wait for **Published … objects · … MB**; click **Refresh Model** if necessary.
 5. Choose **Connect via → USB / Emulator (ADB)**, then click **Connect / Reconnect Emulator**. The emulator must already be running and the APK installed. Keep only the intended emulator running for this button.
 6. Blender restores ADB reverse forwarding, passes its current pairing details and reopens the viewer in **Room**. No QR scan or token entry is required. Wait for **Live from Blender** and the Cube in the room. If Preview is selected, click **Room**.
-7. Move your viewpoint using the emulator’s navigation controls. Use **Tools → Scale** to manipulate the Cube with supported input. **100% source** restores source size; **Assemble** restores separated parts. Use **Hide tools** and the small **Tools** button to hide/recall the toolbox.
+7. Move your viewpoint using the emulator’s navigation controls. Use **Tools → Model → Scale** to manipulate the Cube with supported input. **100% source** restores source size; **Assemble** restores separated parts. Use **Hide tools** and the small **Tools** button to hide/recall the toolbox.
 8. Change the Cube in Blender, for example **S → 1.2 → Enter**. With **Sync model edits** enabled, the viewer updates. **Refresh Model** explicitly republishes it. A single Cube has no separate parts to explode and no animation; try a multi-object or animated scene afterwards.
 
 **Success:** Blender says **Headset connected** (the label also covers the emulator), the app says **Live from Blender**, and the Cube is visible in **Room**. You do not need to align a monitor, stage a take, enable camera access or set up streaming for this first sample.
@@ -109,7 +109,17 @@ If you prefer manual pairing, keep Blender’s bridge running, click **Copy Pair
 adb -s emulator-5554 reverse tcp:8766 tcp:8766
 ```
 
-In the app choose **Tools → Connection → Use manual connection**, enter `http://127.0.0.1:8766` and the token from the second copied line, then click **Connect**. Use your configured port if it differs from 8766. The loopback address refers to Blender through ADB reverse, not to a server running inside the emulator.
+In the app choose **Tools → Connection → Manual connection**, enter `http://127.0.0.1:8766` and the token from the second copied line, then click **Connect**. Use your configured port if it differs from 8766. The loopback address refers to Blender through ADB reverse, not to a server running inside the emulator.
+
+## Toolbox navigation
+
+The toolbox has **Model**, **Render**, **Align** and **Connection** tabs. The selected tab names the page; scrolling stays within that page. A scroll indicator and **Scroll for more** hint show when controls continue below.
+
+When no scene is connected, only pairing controls are shown. Scan Blender’s **current** QR or choose **Manual connection**. Each scan waits for fresh camera frames; move your head slightly if prompted. Expired pairing clears the saved token. A sustained bridge connection loss clears the virtual model and video, then returns to pairing. Normal model revisions and brief network interruptions retain your setup.
+
+Pinch the toolbox’s native movement handle to reposition the panel. Closing it or choosing **Hide tools** leaves the small **Tools** launcher available. Pinch its **Pinch here to move** grip to reposition the launcher. In Room, **Model → Bring Tools launcher here** recalls it near your current viewpoint. The optional **Palm Tools shortcut** shows a Tools button beside your little finger after looking toward a steady open palm; it opens the same toolbox. It defaults off; live hand tracking and physical comfort still need headset verification.
+
+Use **Align → Adjust corner handles** for the recommended viewport alignment. Marker, touch and depth alternatives are under **Align → Experimental calibration**. Align to Blender’s **3D viewport image boundary**, excluding panels and the monitor bezel.
 
 ## Optional render window
 
@@ -118,12 +128,14 @@ The native model path above transfers geometry. To see Blender’s actual shadin
 1. Install external [Python 3.10+](https://www.python.org/downloads/), download `render-worker-setup.zip` from the release, and **extract it**.
 2. In a terminal in that extracted folder, run `python3 tools/setup_render_worker.py` on Mac or `py -3 tools/setup_render_worker.py` in Windows PowerShell. The helper downloads the encoder dependencies and prints its Python interpreter path. If needed, paste that path into Blender’s **Preferences → Add-ons → PICO Blender Bridge → Render worker Python**.
 3. In Blender’s PICO Bridge panel, enable **Allow PICO viewport control** for Scene-aligned mode, choose **Stream appearance** and click **Start viewport stream**. Keep that 3D Viewport open.
-4. In PICO **Room → Tools → Render window**, enable **Show render window**. Choose **Scene-aligned** for a window into the model, or **Live display** to show Blender’s current view.
+4. In PICO **Room → Tools → Render**, enable **Show render window**. Choose **Scene-aligned** for a window into the model, or **Live display** to show Blender’s current view.
 5. Optionally enable **Face user → Fit to model** in Scene-aligned mode. The plane follows a bounding sphere around the model and stays in front when space permits; close to the model, eye clearance permits intersection. **Lock render window** prevents frame grabs. Otherwise grab its border/corners to move or resize it; centre grabs pass through to the model.
 
 Cycles, Eevee, Workbench, Solid, Material Preview and Wireframe are supported with engine-specific limits. Optional **Stereo (manual IPD)** uses explicitly entered eye separation; Mono is the default. **Show 3D model** can hide native rendering while keeping model interaction available. Native part explosion is not reproduced in the streamed Blender image; use **Assemble** for an aligned comparison.
 
 Read [direct-stream setup](docs/DIRECT_STREAMING.md), [render-window controls](docs/RENDER_WINDOW.md) and [stereo setup](docs/STEREO_STREAMING.md). Native materials approximate supported glTF/viewport colours; the render stream provides Blender’s actual image. No Chrome or Mac screen sharing is required.
+
+**Render → Hide render border** controls decoration only: video and model interaction stay active. With **Scene-aligned → Face user + Fit to model**, the border automatically hides. An explicit visibility choice overrides that default; **Use automatic border** restores automatic behavior. Lock the render window to make every grab pass through it.
 
 ## Experimental: running on a compatible device
 
