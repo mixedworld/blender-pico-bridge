@@ -18,10 +18,58 @@ class BridgeViewModelTest {
         model = BridgeViewModel(repository.pairing, ConnectBridgeUseCase(repository))
     }
     @After fun finish() { model.onEvent(BridgeUiEvent.Disconnect); Dispatchers.resetMain() }
+    @Test fun hidingNativeModelSurvivesUpdatesWithoutChangingInteractionOrVideo() = runTest(dispatcher) {
+        model.onEvent(BridgeUiEvent.Connect); runCurrent()
+        val packet = FramePacket("session", 4, "a".repeat(64), null, "Robot", 60, false, 2f, emptyList(), null, 1, 1)
+        repository.events.emit(BridgeUpdate.Model(packet, File("model.glb"))); runCurrent()
+        model.onEvent(BridgeUiEvent.ModelReady(packet.revision!!, .1f))
+        model.onEvent(BridgeUiEvent.HoverChanged(true))
+        val before = model.scene.value
+        assertTrue(model.state.value.modelVisible)
+        model.onEvent(BridgeUiEvent.ModelVisibilityChanged(false))
+        assertFalse(model.state.value.modelVisible)
+        assertEquals(before.copy(modelVisible = false), model.scene.value)
+        model.onEvent(BridgeUiEvent.ModeChanged(InspectionMode.EXPLODE))
+        model.onEvent(BridgeUiEvent.ExplosionChanged(.4f))
+        repository.events.emit(BridgeUpdate.Frame(packet.copy(sequence = 5, frame = 61))); runCurrent()
+        repository.events.emit(BridgeUpdate.Model(packet.copy(sequence = 6, revision = "b".repeat(64)), File("updated.glb"))); runCurrent()
+        assertFalse(model.scene.value.modelVisible)
+        assertEquals(.4f, model.scene.value.explosion, .0001f)
+        val hidden = model.scene.value
+        model.onEvent(BridgeUiEvent.ModelVisibilityChanged(true))
+        assertTrue(model.state.value.modelVisible)
+        assertEquals(hidden.copy(modelVisible = true), model.scene.value)
+    }
     @Test fun initLoadsSavedPairingWithoutClaimingConnected() {
         assertEquals(repository.pairing.endpoint, model.state.value.endpoint)
         assertEquals("disconnected", model.state.value.phase)
         assertFalse(model.state.value.hasModel)
+    }
+    @Test fun connectionStartsScanningAndManualOrCollapseStopsIt() {
+        model.onEvent(BridgeUiEvent.ConnectionPanelChanged(true))
+        assertEquals(ScanPurpose.PAIRING,model.state.value.scanPurpose)
+        assertFalse(model.state.value.manualConnection)
+        model.onEvent(BridgeUiEvent.ManualConnection)
+        assertNull(model.state.value.scanPurpose)
+        assertTrue(model.state.value.manualConnection)
+        model.onEvent(BridgeUiEvent.ScanRequested(ScanPurpose.DEPTH))
+        model.onEvent(BridgeUiEvent.CollapseChanged(true))
+        assertNull(model.state.value.scanPurpose)
+    }
+    @Test fun viewportLinkRequiresServerOptInAndAggregatesGestureEvents() = runTest(dispatcher) {
+        model.onEvent(BridgeUiEvent.LinkViewport(true))
+        assertFalse(model.state.value.linkViewport)
+        model.onEvent(BridgeUiEvent.Connect); runCurrent()
+        val packet = FramePacket("session",4,"a".repeat(64),null,"Model",1,false,0f,emptyList(),null,0,0,viewportControlEnabled=true)
+        repository.events.emit(BridgeUpdate.Model(packet,File("${packet.revision}.glb")));runCurrent()
+        model.onEvent(BridgeUiEvent.LinkViewport(true))
+        assertTrue(model.state.value.linkViewport)
+        repeat(3) { model.onEvent(BridgeUiEvent.MoveViewport(ViewportDelta(pan=listOf(.1f,0f,0f),zoom=1.1f))) }
+        advanceTimeBy(80);runCurrent()
+        assertEquals(1,repository.viewportCommands.size)
+        assertEquals(.3f,repository.viewportCommands[0].pan[0],.00001f)
+        assertEquals(1.331f,repository.viewportCommands[0].zoom,.00001f)
+        model.onEvent(BridgeUiEvent.LinkViewport(false))
     }
     @Test fun successfulModelLoadsAndTimelineFollowsIncomingFrame() = runTest(dispatcher) {
         model.onEvent(BridgeUiEvent.Connect); runCurrent()
@@ -122,6 +170,41 @@ class BridgeViewModelTest {
         settingsModel.onEvent(BridgeUiEvent.SourceHidden(true)); runCurrent()
         assertFalse(repository.visibility.last())
         settingsModel.onEvent(BridgeUiEvent.Disconnect)
+    }
+
+    @Test fun touchCandidateNeedsExplicitAcceptanceAndStaleDisposalCannotCancelReview() = runTest(dispatcher) {
+        val request = beginTouch()
+        val before = model.scene.value.monitor
+        val candidate = before.copy(width=1.1f,height=.62f,position=listOf(.2f,1f,-.8f))
+        model.onEvent(BridgeUiEvent.TouchMeasured(request,candidate))
+        model.onEvent(BridgeUiEvent.CancelTouchAlignment(request))
+        assertEquals(TouchAlignmentPhase.REVIEW,model.state.value.touchPhase)
+        assertEquals(before,model.scene.value.monitor)
+        model.onEvent(BridgeUiEvent.UseTouchedAlignment)
+        assertEquals(candidate,model.scene.value.monitor)
+        assertFalse(model.scene.value.monitor.locked)
+        assertTrue(model.state.value.touchApplied)
+    }
+    @Test fun leavingAlignmentRejectsLateTouchesAndPreservesPreviousCalibration() = runTest(dispatcher) {
+        val request = beginTouch()
+        val before = model.scene.value.monitor
+        model.onEvent(BridgeUiEvent.CancelTouchAlignment())
+        model.onEvent(BridgeUiEvent.TouchMeasured(request,before.copy(width=1.5f)))
+        assertEquals(before,model.scene.value.monitor)
+        assertNull(model.scene.value.touchAlignment)
+        assertEquals(TouchAlignmentPhase.NONE,model.state.value.touchPhase)
+        beginTouch()
+        model.onEvent(BridgeUiEvent.RoomChanged(false))
+        assertNull(model.scene.value.touchAlignment)
+    }
+    private suspend fun TestScope.beginTouch(): Int {
+        model.onEvent(BridgeUiEvent.Connect);runCurrent()
+        val board=CalibrationBoard(1920,1080,listOf(MarkerRect(0,24,24,96,96),MarkerRect(1,1800,24,96,96),MarkerRect(2,1800,960,96,96),MarkerRect(3,24,960,96,96)))
+        val packet=FramePacket("touch",1,"a".repeat(64),null,"Model",1,false,0f,emptyList(),null,0,0,board=board)
+        repository.events.emit(BridgeUpdate.Model(packet,File("model.glb")));runCurrent()
+        model.onEvent(BridgeUiEvent.RoomChanged(true));model.onEvent(BridgeUiEvent.AlignMonitor)
+        model.onEvent(BridgeUiEvent.OpenTouchAlignment);model.onEvent(BridgeUiEvent.StartTouchAlignment)
+        return requireNotNull(model.scene.value.touchAlignment).id
     }
 
 }

@@ -63,7 +63,8 @@ def main():
             parser.error("Build the debug APK first, or use --addon-only")
         validate_apk(args.apk, token)
     addon_zip = args.output / f"pico_blender_bridge-{version()}.zip"
-    sources = [(ADDON / name, f"pico_blender_bridge/{name}") for name in ("__init__.py", "glb.py", "server.py")]
+    sources = [(ADDON / name, f"pico_blender_bridge/{name}") for name in
+               ("__init__.py", "glb.py", "server.py", "pairing.py", "emulator_connection.py", "qrcodegen.py", "calibration.py", "display.py", "tracked_camera.py", "source_visibility.py", "render_stream.py", "render_publisher.html", "capture_protocol.py", "viewport_capture.py", "render_worker.py", "color_transform.py", "capture_visibility.py", "stereo_capture.py")]
     sources.append((ROOT / "LICENSE", "pico_blender_bridge/LICENSE"))
     with zipfile.ZipFile(addon_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path, name in sources:
@@ -73,12 +74,33 @@ def main():
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             archive.writestr(info, data)
-    outputs = [addon_zip]
+    worker_zip = args.output / "render-worker-setup.zip"
+    with zipfile.ZipFile(worker_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for relative in ("tools/setup_render_worker.py", "tools/render-worker-requirements.txt", "docs/DIRECT_STREAMING.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
+            path = ROOT / relative
+            data = path.read_bytes()
+            validate_payload(data, relative, token)
+            info = zipfile.ZipInfo(relative, (1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, data)
+    outputs = [addon_zip, worker_zip]
     if not args.addon_only:
         target = args.output / "blender-pico-bridge-debug.apk"
         if args.apk.resolve() != target.resolve():
             shutil.copy2(args.apk, target)
         outputs.append(target)
+        notices = args.output / "third-party-notices.zip"
+        notice_sources = [ROOT / "THIRD_PARTY_NOTICES.md", ROOT / "LICENSE"] + sorted((ROOT / "LICENSES").glob("*"))
+        with zipfile.ZipFile(notices, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in notice_sources:
+                data = path.read_bytes()
+                validate_payload(data, path.name, token)
+                info = zipfile.ZipInfo(path.relative_to(ROOT).as_posix(), (1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o100644 << 16
+                archive.writestr(info, data)
+        outputs.append(notices)
     checksum = args.output / "SHA256SUMS"
     checksum.write_text("".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in outputs), encoding="utf-8")
     for path in outputs + [checksum]:

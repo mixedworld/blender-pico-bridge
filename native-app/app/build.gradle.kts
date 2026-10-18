@@ -12,8 +12,8 @@ android {
         applicationId = "com.example.blenderpicobridge.p7f82b4c1"
         minSdk = 35
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 7
+        versionName = "0.7.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.addAll(listOf("arm64-v8a", "x86_64")) }
@@ -44,6 +44,12 @@ android {
 }
 
 dependencies {
+    implementation(libs.spatial.ml.securemr)
+    implementation("com.pico.spatial.ml:readback")
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("io.github.webrtc-sdk:android:150.7871.01")
+    implementation("org.opencv:opencv:4.12.0")
+    implementation("androidx.activity:activity-compose:1.10.1")
     implementation(libs.androidx.core.ktx)
     implementation(platform(libs.spatial.bom))
     implementation(libs.spatial.core)
@@ -59,6 +65,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation(libs.junit)
+    androidTestImplementation("org.khronos.openxr:openxr_loader_for_android:1.1.63")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     debugImplementation(libs.androidx.ui.tooling.preview)

@@ -7,5 +7,7 @@ interface BridgeRepository {
     fun savedPairing(): Pairing
     fun savePairing(pairing: Pairing)
     suspend fun setSourceHidden(pairing: Pairing, hidden: Boolean) { throw UnsupportedOperationException("Source visibility unavailable") }
+    suspend fun viewportDelta(pairing: Pairing, session: String, requestId: String, delta: ViewportDelta) { throw UnsupportedOperationException("Viewport control unavailable") }
+    suspend fun viewCamera(pairing: Pairing,session: String,revision: String,stream: String,sequence: Long,camera: TrackedViewportCamera?) { throw UnsupportedOperationException("Tracked camera unavailable") }
     fun observe(pairing: Pairing): Flow<BridgeUpdate>
 }

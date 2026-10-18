@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="com.picovr.permission.SPATIAL_DATA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:name=".platform.SpatialApplication"
@@ -14,6 +18,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.BlenderPicoBridgeTheme"
         tools:targetApi="31">
+
+        <meta-data
+            android:name="pico.spatial.use_experimental_api"
+            android:value="1" />
 
         <activity
             android:name=".platform.LaunchActivity"
