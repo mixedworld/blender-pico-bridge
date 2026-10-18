@@ -8,7 +8,7 @@ View a Blender collection in the PICO Emulator with PBR materials, inspect its s
 
 **Prototype · Emulator-first · MIT**
 
-This feature branch adds an experimental [QR pairing, five-handle viewport alignment and viewport link](docs/QR_ALIGNMENT.md). Build its add-on 0.6.2 and APK together. The 0.3.0 release below remains the emulator baseline; real-device QR pairing is verified; physical monitor fitting and automatic world alignment remain experimental.
+This feature branch adds an experimental [QR pairing, five-handle viewport alignment and viewport link](docs/QR_ALIGNMENT.md). Build its add-on 0.6.3 and APK together. The 0.3.0 release below remains the emulator baseline; real-device QR pairing is verified; physical monitor fitting and automatic world alignment remain experimental.
 
 This public setup targets **PICO OS 6.1 Emulator**. The macOS Apple Silicon workflow has been exercised; Windows instructions and x86-64 APK packaging are provided, but Windows runtime testing is still needed. Physical headset deployment and monitor extraction are experimental and outside this guide.
 
@@ -23,8 +23,8 @@ This public setup targets **PICO OS 6.1 Emulator**. The macOS Apple Silicon work
 3. **Click the vertical PICO Bridge tab** on the right edge of that sidebar. The panel inside is titled **PICO Blender Bridge**. If the tab is missing, [install and enable the add-on](#2-install-the-blender-add-on), then return here.
 4. **Set Source → Visible Scene.** This publishes the visible meshes, including the default cube. You do not need to select the cube or choose a collection.
 5. **Click Start Bridge.** If you already see **Stop Bridge**, the server is running; skip this click. On this feature branch, **Start when panel opens** starts it automatically. Click **Refresh Model** after changing the source, and wait for **Published … objects · … MB** at the bottom of the panel.
-6. **Click Copy Pairing Details.** It copies two lines: the server URL, then the pairing token. Keep Blender open.
-7. **Open Blender Bridge in the PICO Emulator → Connection.** Click **Use manual connection** if shown. Enter **Bridge URL** `http://127.0.0.1:8766` and the **pairing token** from the second copied line, then click **Connect**. For this emulator path, use the loopback URL even if the copied first line shows a LAN address. The [one-time emulator setup](#3-start-the-emulator-and-install-the-viewer) provides the required ADB forwarding.
+6. **Choose Connect via → USB / Emulator (ADB)**, then click **Connect / Reconnect Emulator** (add-on 0.6.3+). With the emulator already running and the viewer installed, Blender restores ADB forwarding, passes the current pairing details and reopens the viewer in Room. Keep Blender open. Use this button again after closing/restarting the emulator. It preserves saved alignment; reopening resets temporary session controls.
+7. **Wait for Live from Blender in the viewer.** No QR scan or token entry is needed. If Blender cannot find ADB, open **Edit → Preferences → Add-ons → PICO Blender Bridge → ADB executable** and select `platform-tools/adb` (`adb.exe` on Windows). Older add-ons can use **Copy Pairing Details**, then the viewer’s **Connection → Use manual connection** with URL `http://127.0.0.1:8766` and the copied token, after setting up [ADB forwarding](#3-start-the-emulator-and-install-the-viewer).
 
 **Success looks like:** the viewer says **Live from Blender** and shows your cube/model in Preview. If the scene has animation, press Play in Blender's Timeline; the viewer follows it. The default cube has no animation, so it will stay still.
 
@@ -157,6 +157,8 @@ In the viewer's **Connection** panel, click **Use manual connection** if shown, 
 | Pairing token | The second line copied from Blender |
 
 Click **Connect**. A model may take a while to import on the emulator. **Preview** fits it to the spatial volume. Press Play in Blender to check timeline sync.
+
+With add-on **0.6.3+**, the easier alternative is Blender’s **Connect via → USB / Emulator (ADB) → Connect / Reconnect Emulator**. It performs forwarding and pairing and launches the installed app; it does not start the emulator or install an APK. With multiple emulators online, it asks you to leave only the intended one running rather than choosing one arbitrarily. Pairing uses Android intent extras on this trusted development machine; do not share ADB access or activity logs containing them.
 
 The copied LAN URL is intentionally replaced by loopback when using ADB reverse. A native Python launch helper is available if entering the token in the emulator is inconvenient: [private pairing and launch](docs/DEVELOPMENT.md#optional-pair-and-launch-helper).
 

@@ -70,6 +70,8 @@ sealed interface BridgeUiEvent {
     data object SourceSize : BridgeUiEvent
     data class MonitorHandleMoved(val index: Int,val delta: List<Float>) : BridgeUiEvent
     data class RenderEnabled(val enabled: Boolean): BridgeUiEvent
+    data class RenderFaceUser(val enabled: Boolean): BridgeUiEvent
+    data class RenderFitModel(val enabled: Boolean): BridgeUiEvent
     data class RenderLocked(val locked: Boolean): BridgeUiEvent
     data class RenderMode(val mode: RenderWindowMode): BridgeUiEvent
     data class RenderStatus(val value: RenderVideoStatus): BridgeUiEvent

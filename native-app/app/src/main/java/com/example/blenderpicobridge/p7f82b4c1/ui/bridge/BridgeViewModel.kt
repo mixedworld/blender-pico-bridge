@@ -384,6 +384,8 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 _state.update { it.copy(scale = 1f, explosion = 0f) }
             }
             is BridgeUiEvent.RenderEnabled -> enableRender(event.enabled)
+            is BridgeUiEvent.RenderFaceUser -> renderWindow(state.value.renderWindow.copy(faceUser=event.enabled))
+            is BridgeUiEvent.RenderFitModel -> renderWindow(state.value.renderWindow.copy(fitModel=event.enabled))
             is BridgeUiEvent.RenderLocked -> renderWindow(state.value.renderWindow.copy(locked=event.locked))
             is BridgeUiEvent.RenderMode -> {
                 renderWindow(state.value.renderWindow.copy(mode=event.mode));renderCamera()
@@ -398,7 +400,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                 if(changed)renderCamera()
             }
             is BridgeUiEvent.RenderProjection -> if(state.value.renderWindow.enabled) _state.update {
-                it.copy(renderStatus=if(event.valid) renderVideoMessage else "View unavailable · face the render window")
+                it.copy(renderStatus=if(event.valid) renderVideoMessage else if(it.renderWindow.autoFit) "View unavailable · waiting for valid model bounds" else "View unavailable · face the render window")
             }
             BridgeUiEvent.RecenterRender -> renderWindow(state.value.renderWindow.let { it.copy(reset=it.reset+1) })
             BridgeUiEvent.RetryRender -> renderWindow(state.value.renderWindow.let { it.copy(retry=it.retry+1) })

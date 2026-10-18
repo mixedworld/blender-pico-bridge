@@ -64,7 +64,7 @@ def main():
         validate_apk(args.apk, token)
     addon_zip = args.output / f"pico_blender_bridge-{version()}.zip"
     sources = [(ADDON / name, f"pico_blender_bridge/{name}") for name in
-               ("__init__.py", "glb.py", "server.py", "pairing.py", "qrcodegen.py", "calibration.py", "display.py", "tracked_camera.py", "source_visibility.py", "render_stream.py", "render_publisher.html", "capture_protocol.py", "viewport_capture.py", "render_worker.py", "color_transform.py", "capture_visibility.py", "stereo_capture.py")]
+               ("__init__.py", "glb.py", "server.py", "pairing.py", "emulator_connection.py", "qrcodegen.py", "calibration.py", "display.py", "tracked_camera.py", "source_visibility.py", "render_stream.py", "render_publisher.html", "capture_protocol.py", "viewport_capture.py", "render_worker.py", "color_transform.py", "capture_visibility.py", "stereo_capture.py")]
     sources.append((ROOT / "LICENSE", "pico_blender_bridge/LICENSE"))
     with zipfile.ZipFile(addon_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path, name in sources:

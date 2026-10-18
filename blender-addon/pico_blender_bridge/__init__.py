@@ -1,6 +1,6 @@
 bl_info = {
     "name": "PICO Blender Bridge", "author": "PICO Blender Bridge",
-    "version": (0, 6, 2), "blender": (4, 2, 0),
+    "version": (0, 6, 3), "blender": (4, 2, 0),
     "location": "3D View > Sidebar > PICO Bridge",
     "description": "Live PBR model and Blender timeline bridge to PICO Spatial SDK",
     "category": "3D View",
@@ -13,6 +13,8 @@ import json
 import struct
 import tempfile
 import time
+import threading
+import queue
 from bpy.app.handlers import persistent
 from .server import BridgeServer
 from .glb import with_explosion_parts, with_viewport_materials, material_profile
@@ -22,6 +24,7 @@ from .tracked_camera import TrackedCamera
 from .source_visibility import hide_source_objects
 from .render_stream import viewport_capture as viewport_crop
 from .viewport_capture import DirectViewportCapture, default_worker_python
+from .emulator_connection import connect_emulator
 
 _server = None
 _exporting = False
@@ -39,6 +42,8 @@ _message = "Stopped"
 _display = None
 _auto_start_attempted = False
 _tracked_camera = TrackedCamera()
+_emulator_connecting = False
+_emulator_message = ''
 
 
 def settings():
@@ -432,6 +437,8 @@ def pairing_route_changed(_self, _context):
 
 class PicoBridgePreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
+    adb_path: bpy.props.StringProperty(name="ADB executable", subtype="FILE_PATH", default="",
+        description="Optional platform-tools/adb (adb.exe on Windows); otherwise search PATH and standard Android SDK locations")
     worker_python: bpy.props.StringProperty(name="Render worker Python", subtype="FILE_PATH", default="")
     stream_size: bpy.props.IntProperty(name="Stream maximum side", default=960, min=128, max=1280)
     stream_shading: bpy.props.EnumProperty(name="Stream appearance",items=[
@@ -447,6 +454,7 @@ class PicoBridgePreferences(bpy.types.AddonPreferences):
     stream_fps: bpy.props.IntProperty(name="Stream frames per second", default=15, min=1, max=30)
 
     def draw(self, context):
+        self.layout.prop(self, "adb_path")
         self.layout.label(text="Direct viewport streaming needs the optional Python encoder environment.")
         self.layout.label(text="Run tools/setup_render_worker.py from the bridge repository once.")
         self.layout.prop(self, "worker_python")
@@ -522,6 +530,50 @@ class PICO_BRIDGE_OT_pairing(bpy.types.Operator):
     def execute(self, context):
         context.window_manager.clipboard = f"{pairing_endpoint()}\n{settings().token}"
         return {"FINISHED"}
+
+
+class PICO_BRIDGE_OT_connect_emulator(bpy.types.Operator):
+    bl_idname = 'pico_bridge.connect_emulator'
+    bl_label = 'Connect / Reconnect Emulator'
+    bl_description = 'Restore ADB forwarding and reopen the installed viewer with current pairing; keep saved alignment'
+
+    @classmethod
+    def poll(cls, context):
+        return _server is not None and settings().pairing_route == 'USB' and not _emulator_connecting
+
+    def execute(self, context):
+        global _emulator_connecting, _emulator_message
+        cfg = settings()
+        prefs = context.preferences.addons[__package__].preferences
+        args = (_server.port, _server.token, bpy.path.abspath(prefs.adb_path) if prefs.adb_path else '')
+        result = queue.Queue(maxsize=1)
+        _emulator_connecting = True
+        _emulator_message = 'Connecting emulator…'
+
+        def worker():
+            try:
+                result.put(connect_emulator(*args))
+            except Exception as exc:
+                # Only this helper's sanitized errors are user-facing.
+                result.put(str(exc) if isinstance(exc, RuntimeError) else 'Emulator connection failed; check ADB preferences.')
+
+        def collect():
+            global _emulator_connecting, _emulator_message
+            try:
+                message = result.get_nowait()
+            except queue.Empty:
+                return .2
+            _emulator_connecting = False
+            _emulator_message = message
+            for window in bpy.context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        area.tag_redraw()
+            return None
+
+        threading.Thread(target=worker, name='PICO emulator pairing', daemon=True).start()
+        bpy.app.timers.register(collect, first_interval=.2)
+        return {'FINISHED'}
 
 
 class PICO_BRIDGE_OT_board(bpy.types.Operator):
@@ -642,7 +694,9 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
             layout.prop(cfg, 'pairing_route')
             layout.label(text=pairing_endpoint())
             if cfg.pairing_route == 'USB':
-                layout.label(text=f'adb reverse tcp:{cfg.port} tcp:{cfg.port}')
+                layout.operator('pico_bridge.connect_emulator', icon='LINKED')
+                if _emulator_message:
+                    layout.label(text=_emulator_message)
             if _display:
                 layout.template_icon(icon_value=_display.icon, scale=8)
                 layout.operator('pico_bridge.calibration_board', text='Hide markers' if _display.overlay else 'Show QR and markers')
@@ -677,7 +731,7 @@ class PICO_BRIDGE_PT_panel(bpy.types.Panel):
 
 
 CLASSES = (PicoBridgePreferences, PicoBridgeSettings, PICO_BRIDGE_OT_start, PICO_BRIDGE_OT_stop,
-           PICO_BRIDGE_OT_refresh, PICO_BRIDGE_OT_pairing, PICO_BRIDGE_OT_board, PICO_BRIDGE_OT_qr, PICO_BRIDGE_OT_center_markers, PICO_BRIDGE_OT_render_window, PICO_BRIDGE_PT_panel)
+           PICO_BRIDGE_OT_refresh, PICO_BRIDGE_OT_pairing, PICO_BRIDGE_OT_connect_emulator, PICO_BRIDGE_OT_board, PICO_BRIDGE_OT_qr, PICO_BRIDGE_OT_center_markers, PICO_BRIDGE_OT_render_window, PICO_BRIDGE_PT_panel)
 
 
 @persistent

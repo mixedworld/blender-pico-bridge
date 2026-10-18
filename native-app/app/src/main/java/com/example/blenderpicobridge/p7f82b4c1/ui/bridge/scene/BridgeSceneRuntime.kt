@@ -86,6 +86,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private var linkedDistance = 1f
     private var linkedRevision: String? = null
     private var lastCameraFrameAt=0L
+    private var renderFollowingValid=true
     private val transform get() = inspectionCarrier.components[TransformComponent::class.java]!!
 
     fun attach(value: SpatialViewContent) {
@@ -110,6 +111,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         if(room) {
             headPosition=position;headRotation=rotation
             renderWindow?.ensurePlaced(calibration,position,rotation)
+            if(!linkedViewport) updateRenderFollowing()
         }
         if (!room || viewerPlaced || content == null) return
         viewerPlaced = true
@@ -127,10 +129,39 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         Log.i("BlenderBridge", "VIEWER_PLACEMENT head=$position rotation=$rotation home=$homePosition tracking=true worldLocked=true")
     }
 
+    private fun updateRenderFollowing() {
+        renderFollowingValid=true
+        if(!room || !renderState.enabled || !renderState.faceUser)return
+        val head=headPosition ?: return
+        val window=renderWindow ?: return
+        val points=if(renderState.autoFit) {
+            // Use the model's fit-owner axes, then convert all eight corners.
+            // A container AABB would inflate the sphere as the model rotates.
+            val bounds=model?.getVisualBounds(fittedSceneRoot,true,true)
+            if(bounds==null || bounds.isEmpty()) { renderFollowingValid=false;emptyList() }
+            else (0 until 8).map { i -> fittedSceneRoot.convertPositionTo(Vector3(
+                if(i and 1==0)bounds.min.x else bounds.max.x,
+                if(i and 2==0)bounds.min.y else bounds.max.y,
+                if(i and 4==0)bounds.min.z else bounds.max.z),null) }
+        } else emptyList()
+        val separation=(latest?.renderStereoEyeSeparationMm ?: 0f)/1000f
+        val eyes=if(separation>0f && headRotation!=null)listOf(-.5f,.5f).map {
+            head+headRotation!!.rotateVector(Vector3(it*separation,0f,0f))
+        } else emptyList()
+        renderFollowingValid=renderFollowingValid && window.follow(head,points,eyes)
+        if(!renderFollowingValid)window.setProjectionValid(false)
+        else if(renderState.mode==RenderWindowMode.LIVE_DISPLAY)window.setProjectionValid(true)
+    }
+
     /** Screen-aligned view in the exported model's coordinate frame; Entity conversions run on main. */
     fun trackView(headPosition: Vector3) {
         if(!room || !linkedViewport || model==null) return
         val remote=renderState.enabled && renderState.mode==RenderWindowMode.SCENE_ALIGNED
+        updateRenderFollowing()
+        if(remote && !renderFollowingValid) {
+            if(renderProjectionValid) { renderProjectionValid=false;event(BridgeUiEvent.RenderProjection(false)) }
+            return
+        }
         if(!remote && (!calibration.enabled || !calibration.locked))return
         val now=SystemClock.elapsedRealtime()
         if(now-lastCameraFrameAt<11) return
@@ -378,6 +409,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             }
             event(BridgeUiEvent.InspectionChanged(1f, "Animated model refitted to the available volume."))
         }
+        updateRenderFollowing()
         if (force || sequence % 10L == 0L) { updateGrabBounds(); updateSourceVisibility() }
         if (sequence % 100L == 0L && room) Log.i("BlenderBridge", "POSE_DIAGNOSTIC position=${transform.position} rotation=${transform.quaternion} visible=${model?.enabled} fitEnabled=${fittedSceneRoot.enabled} sourceHidden=$sourceHidden")
         if (sequence % 20L == 0L) Log.i("BlenderBridge", "FRAME frame=${packet.frame} time=${packet.timeSeconds} playing=${packet.playing} sequence=$sequence contained=${contained()}")
@@ -481,7 +513,10 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             transform.quaternion = oldRotation
             transform.scaleVector = Vector3(oldScale, oldScale, oldScale)
             event(BridgeUiEvent.InspectionChanged(oldScale, "Volume limit reached. Enlarge the window or reset the view."))
-        } else { event(BridgeUiEvent.InspectionChanged(inspectionScale)); savePose(); updateSourceVisibility() }
+        } else {
+            event(BridgeUiEvent.InspectionChanged(inspectionScale)); savePose(); updateSourceVisibility()
+            updateRenderFollowing();headPosition?.let(::trackView)
+        }
     }
 
     fun accepts(entity: Entity): Boolean {
@@ -501,9 +536,10 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         renderState=feed.renderWindow
         if(room && receiveRenderVideo!=null && renderState.enabled) {
             if(renderWindow==null || kotlin.math.abs(renderWindow!!.aspect-renderState.aspect)>.001f) {
-                val pose=renderWindow?.pose();renderWindow?.close()
+                val pose=renderWindow?.pose();val manual=renderWindow?.manualPlacement();renderWindow?.close()
                 renderWindow=RenderWindowScene(placementOwner,renderState.aspect,receiveRenderVideo) { event(BridgeUiEvent.RenderStatus(it)) }
                 pose?.let { renderWindow?.restore(it) }
+                renderWindow?.restoreManualPlacement(manual)
             }
         }
         renderWindow?.update(renderState,feed.renderPairing,feed.monitor,headPosition,headRotation)
@@ -581,6 +617,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             }
         }
         updateSourceVisibility()
+        updateRenderFollowing()
         // A stationary emulator may emit no new HMD sample after enabling/recentering.
         // Seed once from the last valid tracked pose; later motion retains the fast path.
         if(seedRenderCamera && renderState.enabled && linkedViewport) headPosition?.let(::trackView)
