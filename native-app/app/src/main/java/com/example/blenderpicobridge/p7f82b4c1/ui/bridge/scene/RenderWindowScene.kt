@@ -1,7 +1,10 @@
 package com.example.blenderpicobridge.p7f82b4c1.ui.bridge.scene
 
+import android.os.SystemClock
+import android.util.Log
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.*
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.CurvedScreenUseCase
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.BuildRenderBillboardUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase
 import com.pico.spatial.core.ecs.Entity
 import com.pico.spatial.core.ecs.ModelComponent
@@ -37,6 +40,10 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
     private val surface=requireNotNull(texture.acquireSurface()) { "Video surface unavailable" }
     private val picking=RenderFramePicking(anchor,width,height)
     private var locked=false
+    private var faceUser=false
+    private var autoFit=false
+    private var manualPose: Triple<Vector3,Quat,Float>?=null
+    private val billboard=BuildRenderBillboardUseCase()
     private var receiver: AutoCloseable?=null
     private var pairing: Pairing?=null
     private var enabled=false
@@ -47,6 +54,7 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
     private var reset=-1
     private var retry=-1
     private var closed=false
+    private var lastFitLogAt=0L
     private val transform get()=anchor.components[TransformComponent::class.java]!!
     val physicalWidth get()=width*transform.scaleVector.x
 
@@ -66,6 +74,10 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
     fun update(state: RenderWindowState,nextPairing: Pairing?,calibration: MonitorCalibration,head: Vector3?,rotation: Quat?) {
         if(!initialized) place(calibration,head,rotation,true)
         if(reset!=-1 && reset!=state.reset) place(calibration,head,rotation,false)
+        if(!faceUser && state.faceUser && initialized && manualPose==null) manualPose=pose()
+        if((faceUser && !state.faceUser) || (autoFit && !state.autoFit)) manualPose?.let(::restore)
+        if(faceUser && !state.faceUser) manualPose=null
+        faceUser=state.faceUser;autoFit=state.autoFit
         val restart=retry!=state.retry || pairing!=nextPairing
         reset=state.reset;retry=state.retry;pairing=nextPairing
         enabled=state.enabled
@@ -111,20 +123,53 @@ internal class RenderWindowScene(private val owner: Entity,val aspect: Float,
     fun ensurePlaced(calibration: MonitorCalibration,head: Vector3,rotation: Quat) {
         if(!initialized)place(calibration,head,rotation,true)
     }
+    fun manualPlacement()=manualPose
+    fun restoreManualPlacement(pose: Triple<Vector3,Quat,Float>?) { manualPose=pose }
     fun pose()=Triple(transform.position,transform.quaternion,transform.scaleVector.x)
     fun restore(pose: Triple<Vector3,Quat,Float>) {
         transform.position=pose.first;transform.quaternion=pose.second;transform.scaleVector=Vector3(pose.third,pose.third,pose.third);initialized=true
     }
-    private fun updatePicking() = picking.setInteractive(anchor.enabled && !locked && !closed)
-    fun owns(entity: Entity) = anchor.enabled && !locked && picking.owns(entity)
+    /** Called on main before generating this frame's camera frustum. No receiver/resource changes. */
+    fun follow(head: Vector3,modelCorners: List<Vector3>,stereoEyes: List<Vector3> = emptyList()): Boolean {
+        if(!enabled || !active || !faceUser || closed || !initialized)return true
+        if(manualPose==null)manualPose=pose()
+        if(autoFit) {
+            val previousNormal=anchor.convertRotationTo(Quat(),null).rotateVector(Vector3(0f,0f,1f))
+            val fit=billboard.fit(head.values(),modelCorners.map { it.values() },aspect,
+                stereoEyes.map { it.values() },previousNormal.values()) ?: return false
+            transform.position=owner.convertPositionFrom(fit.position.vector(),null)
+            transform.quaternion=owner.convertRotationFrom(fit.rotation.quat(),null)
+            val s=fit.width/width
+            transform.scaleVector=owner.convertScaleFrom(Vector3(s,s,s),null)
+            if(SystemClock.elapsedRealtime()-lastFitLogAt>2000) {
+                lastFitLogAt=SystemClock.elapsedRealtime()
+                val centre=modelCorners.reduce { a,b -> a+b }*(1f/modelCorners.size)
+                val normal=anchor.convertRotationTo(Quat(),null).rotateVector(Vector3(0f,0f,1f))
+                val plane=anchor.convertPositionTo(Vector3.ZERO,null)
+                fun dot(a: Vector3,b: Vector3)=a.x*b.x+a.y*b.y+a.z*b.z
+                val radius=modelCorners.maxOf { val d=it-centre;sqrt(dot(d,d)) }
+                val eyeDistance=dot(head-plane,normal)
+                val gap=-modelCorners.maxOf { dot(it-plane,normal) }
+                Log.i("BlenderBridge","RENDER_FIT sphereRadius=$radius centreDistance=${dot(head-centre,normal)} planeEyeDistance=$eyeDistance nearestBoundGap=$gap plane=$plane normal=$normal visual=UNOBSERVED")
+            }
+        } else {
+            val centre=anchor.convertPositionTo(Vector3.ZERO,null)
+            val facing=billboard.facing(head.values(),centre.values()) ?: return false
+            transform.quaternion=owner.convertRotationFrom(facing.quat(),null)
+        }
+        return true
+    }
+    private fun updatePicking() = picking.setInteractive(anchor.enabled && !locked && !autoFit && !closed)
+    fun owns(entity: Entity) = anchor.enabled && !locked && !autoFit && picking.owns(entity)
     fun manipulate(delta: Vector3,rotation: Quat,scale: Float) {
-        if(locked || !anchor.enabled || closed)return
+        if(locked || autoFit || !anchor.enabled || closed)return
         transform.position=transform.position+delta
         val q=rotation*transform.quaternion
         val n=sqrt(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w)
         transform.quaternion=Quat(q.x/n,q.y/n,q.z/n,q.w/n)
         val s=(transform.scaleVector.x*scale).coerceIn(.35f/width,1.8f/width)
         transform.scaleVector=Vector3(s,s,s)
+        if(faceUser) manualPose=Triple(transform.position,rotation*(manualPose?.second ?: transform.quaternion),s)
     }
     override fun close() {
         if(closed)return

@@ -24,6 +24,28 @@ class RenderWindowViewModelTest {
         repository.events.emit(BridgeUpdate.Frame(packet));runCurrent()
         model.onEvent(BridgeUiEvent.ModelReady(packet.revision!!,1f));model.onEvent(BridgeUiEvent.RoomChanged(true))
     }
+    @Test fun billboardAndFitAreIndependentOfLockVideoAndMode()=runTest(dispatcher) {
+        try {
+            open();model.onEvent(BridgeUiEvent.RenderEnabled(true))
+            model.onEvent(BridgeUiEvent.RenderStatus(RenderVideoStatus("Live",true)))
+            val before=model.scene.value
+            model.onEvent(BridgeUiEvent.RenderFaceUser(true))
+            model.onEvent(BridgeUiEvent.RenderFitModel(true))
+            model.onEvent(BridgeUiEvent.RenderLocked(true))
+            assertEquals(before.copy(renderWindow=before.renderWindow.copy(faceUser=true,fitModel=true,locked=true)),model.scene.value)
+            assertTrue(model.scene.value.renderWindow.autoFit)
+            assertTrue(model.state.value.linkViewport)
+            assertTrue(model.state.value.renderStreaming)
+            model.onEvent(BridgeUiEvent.RenderMode(RenderWindowMode.LIVE_DISPLAY))
+            assertFalse(model.scene.value.renderWindow.autoFit)
+            assertTrue(model.scene.value.renderWindow.faceUser)
+            model.onEvent(BridgeUiEvent.RenderMode(RenderWindowMode.SCENE_ALIGNED))
+            assertTrue(model.scene.value.renderWindow.autoFit)
+            model.onEvent(BridgeUiEvent.RenderFaceUser(false))
+            assertFalse(model.scene.value.renderWindow.autoFit)
+            assertTrue(model.scene.value.renderWindow.locked)
+        } finally { model.onEvent(BridgeUiEvent.Disconnect);runCurrent() }
+    }
     @Test fun renderLockOnlyChangesPickingAndSurvivesRetryModeAndVisibilityChanges()=runTest(dispatcher) {
         try {
             open();model.onEvent(BridgeUiEvent.RenderEnabled(true))

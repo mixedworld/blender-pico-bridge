@@ -43,6 +43,11 @@ class RenderWindowSceneTest {
             inst.runOnMainSync { model.onEvent(BridgeUiEvent.RecenterRender) }
             assertTrue("Scene-aligned camera must start",await { model.state.value.linkViewport && !model.state.value.renderStatus.startsWith("View unavailable") })
         }
+        val billboard=InstrumentationRegistry.getArguments().getString("render_scene_billboard")=="true"
+        if(billboard) inst.runOnMainSync {
+            model.onEvent(BridgeUiEvent.RenderFaceUser(true))
+            model.onEvent(BridgeUiEvent.RenderFitModel(true))
+        }
         val hideNative=InstrumentationRegistry.getArguments().getString("render_scene_hide_model")=="true"
         if(hideNative) inst.runOnMainSync { model.onEvent(BridgeUiEvent.ModelVisibilityChanged(false)) }
         val lockWindow=InstrumentationRegistry.getArguments().getString("render_scene_lock_window")=="true"
@@ -52,6 +57,14 @@ class RenderWindowSceneTest {
         Thread.sleep(hold)
         assertTrue("Production window lost video: "+model.state.value.renderStatus,model.state.value.renderStreaming)
         if(aligned)assertTrue("Scene-aligned camera must survive scene edits",model.state.value.linkViewport)
+        if(billboard) {
+            assertTrue("Auto-fit remains active",model.scene.value.renderWindow.autoFit)
+            assertTrue("Auto-fit camera remains valid",!model.state.value.renderStatus.startsWith("View unavailable"))
+            inst.runOnMainSync {
+                model.onEvent(BridgeUiEvent.RenderFitModel(false))
+                model.onEvent(BridgeUiEvent.RenderFaceUser(false))
+            }
+        }
         if(lockWindow) {
             assertTrue("Frame lock must survive live video",model.scene.value.renderWindow.locked)
             inst.runOnMainSync { model.onEvent(BridgeUiEvent.RenderLocked(false)) }
