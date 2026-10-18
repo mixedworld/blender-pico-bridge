@@ -1,30 +1,25 @@
 # Validation scope
 
-Publication preparation checked on **15 October 2026**. This is an emulator-first development preview, not a store-ready release.
+**v0.7.0**, prepared on **18 October 2026**. This is an emulator-first development preview, not a store-ready release.
 
-| Check | Result |
+| Check | Evidence / scope |
 | --- | --- |
-| Host | macOS, Apple Silicon |
-| Blender baseline | 5.2.2 LTS |
-| PICO SDK / knowledge | BOM 6.1.9 / matching 6.1 knowledge line |
-| Development tools | CLI 0.6.0, Emulator 6.1.0, Editor 6.1.7 |
-| Environment diagnostics | Usable, no errors; optional profiling/agent-host configuration warnings remain |
-| Python transport and GLB tests | 5 passed |
-| Kotlin tests | 18 passed, no failures or errors |
-| Native debug build | Passed locally and from an isolated archive of the reviewed Git index |
-| Isolated source build | Used installed JDK/Android SDK and shared Gradle dependency cache; no demo files, evidence, `.tools`, vendor box model or original checkout source files were needed |
-| APK architecture packaging | Both ARM64 and x86-64 native libraries present |
-| Occlusion asset packaging | One `.bundle`, stored uncompressed in APK; matches checked-in bundle bytes |
-| Mac emulator install/launch | Passed; live model loaded with 65 nodes and 3 textures; Preview fit applied |
-| Redacted asset runtime | Material loaded; 64 mesh parts / 21 PBR materials logged; a deterministic halfway mask view was visually checked in the emulator |
-| Crash buffer during check | No entries |
-| Add-on packaging | Allowlisted source ZIP generated; two successive packages produce identical add-on bytes |
-| Publication scan | Git-index scan passed for private file categories, known local pairing token, local authoring paths and obvious private-key patterns; asset ZIP contents inspected too |
-| Documentation | Local file links checked; official standalone downloads and their launcher filenames verified from vendor ZIP inventories |
-| GitHub Actions | [Python and Android jobs passed](https://github.com/mixedworld/blender-pico-bridge/actions/runs/38754960203) on fresh Ubuntu runners: Python tests, source audit, Kotlin unit tests, debug APK build and package validation |
+| Host | macOS Apple Silicon; Blender 5.2.2 LTS |
+| Native dependency | PICO Spatial SDK BOM 6.1.9; Emulator 6.1.0 |
+| Python regression suite | 59 tests, 13 Blender/GPU-only skips outside Blender, no failures |
+| Kotlin unit suite | 131 tests, no failures |
+| Current functional emulator checks | Four sphere/scene/frame-picking checks plus one production streaming check passed before packaging; includes the cached imported model, hidden native bounds, transformed parents, manual placement restoration and receiver ownership |
+| Fit visual confirmation | User confirmed the render rectangle stays clear of the native model from the farther viewing position; production numeric gap was about 3 cm |
+| Render stream | Direct mono/stereo and colour/alpha transport exercised in emulator sessions; numerical colour checks and user brightness/colour comparison passed |
+| Reconnect | New Blender action reopened and paired the already-installed emulator viewer, verified by authenticated client polling |
+| Packaging | Explicit add-on allowlist; APK checked for both ARM64 and x86-64 native libraries, an uncompressed occlusion bundle matching source, known private token and local authoring paths |
+| Publication | Exact staged Git tree audited before publication; local credentials, captures, third-party models and private Editor workspace excluded |
+| Downloads | Official standalone Mac/Windows emulator archive URLs returned HTTP 200 on 18 October 2026; launcher filenames were previously inspected in vendor archives |
 
-Windows commands and standalone ZIPs are documented, and an x86-64 APK is packaged, but **Windows runtime and standalone launcher execution have not been tested here**. Physical hand-input comfort, camera tracking, sustained GPU performance and complete visual-design fidelity remain separate checks. The emulator does not establish headset performance.
+The release process also rebuilds the reviewed source in an isolated archive, packages that build, and checks the Room Cube path. The GitHub Actions checks build and package on Ubuntu; they do not run a PICO emulator. See the repository’s [Actions](https://github.com/mixedworld/blender-pico-bridge/actions) for the actual release commit’s results.
 
-The native runtime screenshots used an existing local test scene. Third-party models, their screenshots and real-room recordings are deliberately not part of the public source tree. The README diagram is original explanatory artwork, not a screenshot or a claim of rendering fidelity.
+Standalone vendor-launcher execution and Windows runtime have not been tested here. An x86-64 APK does not establish a Windows runtime pass. Physical-device support is experimental; emulator tests do not establish physical hand-input comfort, camera/depth availability, binocular compositing, environment lighting or sustained performance. No specific device is claimed as a supported release target.
 
-Room, source hiding, physical casting and monitor extraction remain experimental code outside the public emulator getting-started flow. This preparation does not implement corner handles or curved/automatic monitor alignment.
+Five-handle alignment is the primary viewport alignment method. Marker, depth, touch and automatic world alignment remain optional experiments. Saved anchors and permissions are runtime-dependent. A full managed visual-fidelity/performance certification has not been completed.
+
+Some historical local tests used private third-party scenes. Those models, their screenshots and room recordings are not part of the source or release assets. The public first sample uses Blender’s default Cube. The README architecture diagram is explanatory artwork, not a rendering-fidelity claim.

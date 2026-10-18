@@ -1,6 +1,6 @@
 # QR pairing, curved monitor measurement and viewport linking
 
-Experimental feature branch: `feature/qr-monitor-viewport-sync`. Build the add-on **0.4.0** and APK together from this branch. The published 0.3.0 downloads do not contain these features. This is a draft implementation, not a verified automatic monitor alignment release.
+Included in **v0.7.0**. Install the matching release add-on and APK. Five-handle viewport placement is the primary alignment method; marker, depth, touch and automatic world alignment remain experimental. Start with the [Room Cube walkthrough](../README.md#4-run-your-first-blender-cube-in-room-mode). No particular physical device is a supported target of this guide.
 
 ## Pair from Blender
 
