@@ -1,6 +1,6 @@
 bl_info = {
     "name": "PICO Blender Bridge", "author": "PICO Blender Bridge",
-    "version": (0, 6, 3), "blender": (4, 2, 0),
+    "version": (0, 7, 0), "blender": (4, 2, 0),
     "location": "3D View > Sidebar > PICO Bridge",
     "description": "Live PBR model and Blender timeline bridge to PICO Spatial SDK",
     "category": "3D View",

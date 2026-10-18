@@ -22,10 +22,12 @@ python3 tools/package_release.py
 
 Review `dist/release/SHA256SUMS`, install the candidate APK on the emulator, and state the host platform and actual validation limits in release notes. Treat Windows as unverified until someone tests it. The debug signing key is local to its build machine; do not commit or upload a keystore.
 
-Suggested first release title: **0.3.0 — Emulator preview**. Release assets are the add-on ZIP, debug APK and checksum file. Source can be downloaded from the repository/tag. The native scaffold currently retains its own Android `versionName` of 1.0; the add-on is 0.3.0. This preview is a paired development snapshot, not a promise of matching Android store versioning.
+Release versions must match between add-on `bl_info`, Android `versionName` and the tag; increment Android `versionCode` for updates. Version 0.7.0 uses versionCode 7. Release assets are the versioned add-on ZIP, universal debug APK, `render-worker-setup.zip`, `third-party-notices.zip` and `SHA256SUMS`. Source is available through the tag. Include the third-party notices with redistributed APKs.
+
+For 0.7.0, use the README’s Room Cube path and keep experimental device instructions generic. Do not publish device-specific claims, local calibration payloads or private test assets.
 
 ## Publish when GitHub is connected
 
-Push the reviewed local `main` branch to `mixedworld/blender-pico-bridge` and let CI run. Review successful CI and the source tree before publishing a tagged release with the verified assets. No workflow in this repository creates a remote, pushes changes, uploads models, or automatically publishes a release.
+Merge the reviewed feature branch into `main` in `mixedworld/blender-pico-bridge` and let CI run. Review successful CI and the source tree before publishing a tagged release with the verified assets. No workflow in this repository creates a remote, pushes changes, uploads models, or automatically publishes a release.
 
-After each public release exists, update README’s “Obtain the bridge packages” section to link to that real release. Do not add placeholder download links that look like existing releases. Private vulnerability reporting is enabled; SECURITY.md links to the private reporting form.
+Prepare README links for the intended release version, then verify that the published release and all linked assets exist before announcing completion. Never leave links to unpublished placeholder packages in a completed release. Private vulnerability reporting is enabled; SECURITY.md links to the private reporting form.

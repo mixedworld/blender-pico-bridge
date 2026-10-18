@@ -1,6 +1,6 @@
 # Blender PICO Bridge
 
-Read README.md and docs/DEVELOPMENT.md for the supported emulator-only public setup. Original code is MIT; preserve third-party notices. This is an existing functional prototype, not a new scaffold.
+Read README.md and docs/DEVELOPMENT.md for the supported emulator-first Room setup. Original code is MIT; preserve third-party notices. This is an existing functional prototype, not a new scaffold.
 
 - `blender-addon/pico_blender_bridge/`: Blender exporter, authenticated HTTP server and source-visibility lease.
 - `native-app/`: Kotlin/PICO Spatial SDK 6.1.9; read its AGENTS.md before editing it.

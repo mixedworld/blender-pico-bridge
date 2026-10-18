@@ -1,4 +1,4 @@
-# Direct Blender video with transparency (experimental, 0.6.2)
+# Direct Blender video with transparency (experimental, 0.7.0)
 
 Blender supplies rendered RGBA pixels to a local encoder process. WebRTC carries them directly to the PICO app. No browser, screen recording permission, PICO Connect or desktop sharing is needed. **Cycles, Eevee and Workbench** share the same encoder and receiver. You can also stream Solid, Material Preview or Wireframe viewport shading.
 
@@ -16,7 +16,7 @@ Transparent pixels have their RGB cleared before encoding. This avoids spending 
 
 ## Install once
 
-Use the add-on **0.6.2** and native APK from the same checkout. Packaged builds also include `render-worker-setup.zip`: extract it and run the helper inside its `tools` folder if you are not using a repository checkout. Install the optional encoder environment using an external **Python 3.10+**:
+Use the add-on **0.7.0** and native APK from the same checkout. Packaged builds also include `render-worker-setup.zip`: extract it and run the helper inside its `tools` folder if you are not using a repository checkout. Install the optional encoder environment using an external **Python 3.10+**:
 
 ```sh
 # macOS / Linux, from the repository directory
