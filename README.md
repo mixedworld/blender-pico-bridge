@@ -80,7 +80,7 @@ adb -s emulator-5554 install -r blender-pico-bridge-debug.apk
 adb -s emulator-5554 shell am start -n com.example.blenderpicobridge.p7f82b4c1/.platform.LaunchActivity --ez inspection_room true
 ```
 
-These commands work in macOS Terminal and Windows PowerShell when `adb` is on PATH. With a local Windows executable, use `.\adb.exe`; with a local Mac executable use `./adb`. Wait for **Success** from installation. The app should open in **Room**; if it opens in Preview, choose **Room** in the toolbox. A connection warning is expected until Blender is paired.
+These commands work in macOS Terminal and Windows PowerShell when `adb` is on PATH. With a local Windows executable, use `.\adb.exe`; with a local Mac executable use `./adb`. Wait for **Success** from installation. Until paired, the app shows **Connect to Blender** with QR and manual connection controls. Room opens after the paired model has loaded. If it then opens in Preview, choose **Tools → Model → Room**.
 
 Blender may have a different PATH from Terminal. If needed, set **Edit → Preferences → Add-ons → PICO Blender Bridge → ADB executable** to the actual `platform-tools/adb` (`adb.exe` on Windows).
 
@@ -109,7 +109,7 @@ If you prefer manual pairing, keep Blender’s bridge running, click **Copy Pair
 adb -s emulator-5554 reverse tcp:8766 tcp:8766
 ```
 
-In the app choose **Tools → Connection → Manual connection**, enter `http://127.0.0.1:8766` and the token from the second copied line, then click **Connect**. Use your configured port if it differs from 8766. The loopback address refers to Blender through ADB reverse, not to a server running inside the emulator.
+On the app’s **Connect to Blender** screen, choose **Manual connection**, enter `http://127.0.0.1:8766` and the token from the second copied line, then click **Connect**. Use your configured port if it differs from 8766. The loopback address refers to Blender through ADB reverse, not to a server running inside the emulator.
 
 ## Toolbox navigation
 

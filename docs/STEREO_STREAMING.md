@@ -7,7 +7,7 @@ Stereo uses two independently rendered Blender cameras, packed into one WebRTC v
 1. Install the matching add-on and native app from this checkout. Set up the [optional render worker](DIRECT_STREAMING.md) once.
 2. In Blender, open **3D Viewport → Sidebar → PICO Bridge**. Stop the viewport stream if it is running.
 3. Set **Stream views → Stereo (manual IPD)**. Enter your headset's eye separation in **Manual eye separation (mm)**, then check **Use this manually entered eye separation**. Changing the value clears its confirmation. The initial 64 mm shown in the field is an example, not an automatic measurement.
-4. Click **Start viewport stream**. In PICO Room, enable **Tools → Render window → Show render window** and choose **Scene-aligned** for overlay against the native model. Recenter the render window if needed.
+4. Click **Start viewport stream**. In PICO Room, enable **Tools → Render → Show render window** and choose **Scene-aligned** for overlay against the native model. Recenter the render window if needed.
 5. To return to Mono, stop the Blender stream, select **Mono**, and start again. The native receiver reconnects and selects the matching playback mode automatically.
 
 For Cycles, Blender opens a temporary window with left/right camera previews. Keep it open during streaming; closing it stops stereo and restores the capture settings. The main viewport remains a centre view. Eevee, Workbench and the Solid/Material Preview/Wireframe appearances render both eyes offscreen in one draw callback and do not need that extra window. Two renders cost more GPU work than Mono; start with a moderate stream resolution.

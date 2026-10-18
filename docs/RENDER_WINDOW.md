@@ -4,13 +4,13 @@
 
 Bring Blender’s actual rendered viewport—including Cycles lighting and materials—into Room as a movable video window. The existing native model stays in the scene. Switch between an aligned window into that model and a floating display of Blender’s current view.
 
-This feature is on `feature/cycles-render-window`. Build the add-on and APK from the same checkout. It is separate from the 0.3.0 emulator release.
+Included in v0.8.0. Install the add-on and APK from the same release, or build both from the same checkout.
 
 ## Start here
 
-Use the [direct Blender streaming setup](DIRECT_STREAMING.md): install the optional render worker once, open Blender's PICO Bridge panel, click **Start viewport stream**, pair the emulator/app and enable **Tools → Render window → Show render window**. Choose Cycles, Eevee or Workbench in Blender, or select Solid, Material Preview or Wireframe under **Stream appearance**. The encoder reads GPU pixels directly, with a transparent world background; Chrome capture is no longer the default.
+Use the [direct Blender streaming setup](DIRECT_STREAMING.md): install the optional render worker once, open Blender's PICO Bridge panel, click **Start viewport stream**, pair the emulator/app and enable **Tools → Render → Show render window**. Choose Cycles, Eevee or Workbench in Blender, or select Solid, Material Preview or Wireframe under **Stream appearance**. The encoder reads GPU pixels directly, with a transparent world background; Chrome capture is no longer the default.
 
-Grab the window’s **border or corners** to move or rotate it; start both hands on the border to resize (0.35–1.8 m). The image centre always passes grabs through to the native model, including when **Show 3D model** is off. In **Tools → Render window**, enable **Lock render window** to disable all frame grabbing, including its border. Unlock it to reposition it. Locking only changes interaction; video and Scene-aligned camera sync continue. Recenter places it in front of you. It remains independent of the saved physical viewport frame and curvature.
+Grab the window’s **border or corners** to move or rotate it; start both hands on the border to resize (0.35–1.8 m). The image centre always passes grabs through to the native model, including when **Show 3D model** is off. In **Tools → Render**, enable **Lock render window** to disable all frame grabbing, including its border. Unlock it to reposition it. Locking only changes interaction; video and Scene-aligned camera sync continue. Recenter places it in front of you. It remains independent of the saved physical viewport frame and curvature.
 
 ## Try both modes
 
@@ -42,13 +42,13 @@ The emulator distance-visibility check was confirmed interactively: after pinchi
 
 ### Hide the native model while keeping control
 
-In PICO **Tools**, switch **Show 3D model** off to show only the streamed render. The native model stays loaded: grab its existing position to move, rotate, scale or explode it. Its hover highlight is suppressed while hidden. Turn the switch on to reveal it at its current pose. This does not hide the Blender source or the render window.
+In PICO **Tools → Model**, switch **Show 3D model** off to show only the streamed render. The native model stays loaded: grab its existing position to move, rotate, scale or explode it. Its hover highlight is suppressed while hidden. Turn the switch on to reveal it at its current pose. This does not hide the Blender source or the render window.
 
 The setting survives incoming scene updates for the current app session; a fresh app start defaults to showing the model.
 
 ### Face the viewer and fit to the model
 
-In **Tools → Render window**, enable **Face user** to keep the video surface facing your tracked head while its centre stays at the manual position. This works in Scene-aligned and Live display. You can still move or resize it by its border when unlocked. **Lock render window** disables hand grabs; automatic facing continues.
+In **Tools → Render**, enable **Face user** to keep the video surface facing your tracked head while its centre stays at the manual position. This works in Scene-aligned and Live display. You can still move or resize it by its border when unlocked. **Lock render window** disables hand grabs; automatic facing continues.
 
 For a render surface that follows the model, choose **Scene-aligned**, enable **Face user**, then **Fit to model**. The app measures the model’s current bounding box in its fit-owner axes and surrounds it with a sphere centred on that box. The radius is the box’s half diagonal, enclosing every corner. It places the rectangle centre on the viewer-facing sphere surface plus 3 cm, when space permits, and sizes it to cover the projected box with 8% padding. The sphere uses the oriented box, so rotating the model does not artificially inflate the radius. It preserves the stream aspect ratio and includes both manually configured stereo eye positions. Hidden native meshes retain bounds, so this works with **Show 3D model** off. Current model movement, scaling, animation bounds and explosion bounds update the fit. Assemble the model for matching Blender/native geometry; native part explosion is still not transmitted to Blender.
 
