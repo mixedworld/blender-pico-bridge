@@ -1,0 +1,69 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Blender · Render window</title>
+<style>body{font:16px system-ui;background:#15181d;color:#edf0f4;max-width:960px;margin:48px auto;padding:0 24px}h1{font-size:28px}p{line-height:1.55;color:#bbc3ce}button{font:inherit;border:0;border-radius:12px;padding:12px 20px;margin:4px;background:#dce8fa;color:#152035;cursor:pointer}button:disabled{opacity:.45}canvas{width:100%;margin-top:24px;background:#000;border-radius:8px}#state{min-height:24px}video{display:none}</style>
+<h1>Blender render window</h1><p>Share the <strong>Blender window</strong>, then enable <strong>Render window</strong> in PICO Room. Only the selected Blender viewport crop below is sent. Keep this page open. Audio is off.</p>
+<button id="start">Share Blender window</button><button id="stop" disabled>Stop sharing</button><p id="state" role="status">Ready</p><p id="diagnostics" aria-live="polite"></p><video id="source" muted playsinline></video><canvas id="preview" width="1280" height="720"></canvas>
+<script>
+'use strict';
+const token=new URLSearchParams(location.hash.slice(1)).get('token');history.replaceState(null,'',location.pathname);
+const source=document.querySelector('#source'),canvas=document.querySelector('#preview'),ctx=canvas.getContext('2d',{alpha:false}),status=document.querySelector('#state');
+let capture=null,out=null,pc=null,streamId=null,geometry=null,running=false,polling=false,lastBeat=0,lastStats=0,viewerIceIndex=0;
+const headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'};
+async function post(body){const r=await fetch('/v1/render-stream',{method:'POST',headers,body:JSON.stringify(body)});if(!r.ok)throw Error('Bridge signaling unavailable ('+r.status+')');}
+function paint(){
+ if(!running)return;
+ const w=source.videoWidth,h=source.videoHeight,g=geometry;
+ if(w&&h&&g&&g.windowWidth>0&&g.windowHeight>0){
+  const scale=w/g.windowWidth,title=Math.max(0,h-g.windowHeight*scale);
+  const x=g.x*scale,y=title+(g.windowHeight-g.y-g.height)*scale,cw=g.width*scale,ch=g.height*scale;
+  const factor=Math.min(1,1280/cw,1280/ch),ow=Math.max(2,Math.round(cw*factor/2)*2),oh=Math.max(2,Math.round(ch*factor/2)*2);
+  if(canvas.width!==ow||canvas.height!==oh){canvas.width=ow;canvas.height=oh;}
+  ctx.drawImage(source,x,y,cw,ch,0,0,ow,oh);
+ }
+ // Paint on a clock, including a static/converged Cycles view. New peers
+ // must receive a frame before camera tracking is allowed to start.
+}
+async function answer(state){
+ if(pc)pc.close();const peer=new RTCPeerConnection({iceServers:[]});pc=peer;streamId=state.stream;viewerIceIndex=0;
+ const id=state.stream;peer.onicecandidate=e=>{const c=e.candidate;if(c&&pc===peer)post({type:"ice",stream:id,side:"publisher",candidate:c.candidate,mid:c.sdpMid,index:c.sdpMLineIndex}).catch(()=>{});};
+ peer.onconnectionstatechange=()=>{if(pc===peer)status.textContent=peer.connectionState==='connected'?'Streaming to PICO · '+canvas.width+' × '+canvas.height:'PICO · '+peer.connectionState;};
+ await peer.setRemoteDescription({type:'offer',sdp:state.offer});out.getTracks().forEach(t=>peer.addTrack(t,out));
+ await peer.setLocalDescription(await peer.createAnswer());
+ if(running&&pc===peer)await post({type:'answer',stream:streamId,sdp:peer.localDescription.sdp});
+}
+async function poll(){
+ if(!running||polling)return;polling=true;
+ try{
+  const response=await fetch('/v1/render-stream',{headers});if(!response.ok)throw Error('Pairing unavailable; reopen this page from Blender.');
+  const state=await response.json();geometry=state.capture;
+  if(!geometry)status.textContent='Waiting for a Blender 3D viewport';
+  if(Date.now()-lastBeat>3000){await post({type:'publisher',width:canvas.width,height:canvas.height});lastBeat=Date.now();}
+  if(state.offer&&state.stream!==streamId)await answer(state);
+  else if(!state.stream&&pc){pc.close();pc=null;streamId=null;status.textContent='Sharing viewport · enable Render window in PICO';}
+  if(pc&&pc.remoteDescription&&state.stream===streamId){
+   const remote=state.viewerCandidates??[];
+   while(viewerIceIndex<remote.length){const c=remote[viewerIceIndex++];await pc.addIceCandidate({candidate:c.candidate,sdpMid:c.mid,sdpMLineIndex:c.index});}
+  }
+  if(pc&&Date.now()-lastStats>1000){
+   lastStats=Date.now();const peer=pc,stats=await peer.getStats();
+   if(pc===peer){const video=[...stats.values()].find(s=>s.type==='outbound-rtp'&&s.kind==='video');document.querySelector('#diagnostics').textContent='Peer '+peer.connectionState+' · ICE '+peer.iceConnectionState+' · encoded '+(video?.framesEncoded??0)+' frames · sent '+Math.round((video?.bytesSent??0)/1024)+' KiB';}
+  }
+ }catch(error){status.textContent=error.message;}finally{polling=false;}
+}
+async function stop(){
+ running=false;document.querySelector('#diagnostics').textContent='';
+ if(pc)pc.close();pc=null;streamId=null;
+ for(const media of [capture,out])if(media)media.getTracks().forEach(t=>t.stop());capture=null;out=null;source.srcObject=null;
+ document.querySelector('#start').disabled=false;document.querySelector('#stop').disabled=true;status.textContent='Sharing stopped';
+ try{await post({type:'unpublish'});}catch(_){}
+}
+document.querySelector('#start').onclick=async()=>{
+ if(!token){status.textContent='Open this page using Share render window in Blender’s PICO Bridge panel.';return;}
+ try{
+  capture=await navigator.mediaDevices.getDisplayMedia({video:{displaySurface:'window',frameRate:30},audio:false});
+  source.srcObject=capture;await source.play();running=true;out=canvas.captureStream(30);
+  capture.getVideoTracks()[0].addEventListener('ended',stop,{once:true});
+  document.querySelector('#start').disabled=true;document.querySelector('#stop').disabled=false;
+  status.textContent='Sharing viewport · enable Render window in PICO';paint();await poll();
+ }catch(error){status.textContent=error.message;}
+};document.querySelector('#stop').onclick=stop;setInterval(poll,250);setInterval(paint,1000/30);
+</script></html>

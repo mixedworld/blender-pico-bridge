@@ -50,16 +50,18 @@ python3 tools/package_release.py
 
 On Windows use `py -3 tools/package_release.py` if Python is not exposed as `python3`. This emits the add-on ZIP, the built APK and `SHA256SUMS` into `dist/release/`. It refuses an APK whose occlusion bundle differs from source, whose bundle is compressed in the APK, or which lacks either required ABI. It also checks package payloads for known local path prefixes and, when present locally, the private pairing token.
 
-For the add-on alone, use `python3 tools/package_release.py --addon-only`. ZIP contents come from the three add-on source files and the MIT license, with fixed metadata for reproducibility. No local scenes, tokens or installed Python packages are included.
+For the add-on alone, use `python3 tools/package_release.py --addon-only`. ZIP contents come from the explicit source allowlist and MIT license, with fixed metadata for reproducibility. The add-on also includes the MIT-licensed Nayuki QR encoder. No local scenes, tokens or installed Python packages are included.
 
 The APK is debug-signed using the build machine’s debug keystore. Prefer a release asset built once for all users; independently built debug APKs can have different signatures. See [installation troubleshooting](TROUBLESHOOTING.md).
+
+The packager also emits `third-party-notices.zip`. Distribute it alongside the APK; it contains the WebRTC engine, packaging and bundled third-party notices. See [render-window setup](RENDER_WINDOW.md).
 
 ## Start a standalone emulator package
 
 Download the matching ZIP linked from the README and extract the complete archive to a writable directory. Leave the package’s `picoemulator`, `platform-tools`, system images and configuration folders together.
 
-- **macOS Apple Silicon:** open Terminal in the extracted `swan_rls_spaceos_oversea_K_pico_emulator_mac_20260902` directory and run `bash start-emulator.sh`.
-- **Windows:** open the extracted `swan_rls_spaceos_oversea_K_pico_emulator_win64_20260902` directory and run `start-emulator.bat` (PowerShell: `.\start-emulator.bat`).
+- **macOS Apple Silicon:** open Terminal in the extracted directory containing `start-emulator.sh` and run `bash start-emulator.sh`.
+- **Windows:** open the extracted directory containing `start-emulator.bat` and run `start-emulator.bat` (PowerShell: `.\start-emulator.bat`).
 
 The launchers were verified as files in the official ZIPs; running these standalone launchers has not been tested here. Review the vendor scripts before running them: the Mac launcher can request administrator access for quarantine handling, and the Windows launcher changes a console preference temporarily. This project does not change system security settings. If the launcher cannot locate its `Pico` AVD or fails host checks, use PICO’s setup guidance or the CLI provisioning route instead of deleting existing emulator data.
 
@@ -92,7 +94,7 @@ The standalone vendor ZIP download links are in the [README](../README.md#standa
 
 ## Optional pair and launch helper
 
-The primary setup uses the viewer’s Connection panel. For easier entry, the helper accepts a private pairing file. Copy the example first:
+The primary setup uses Blender’s **Connect / Reconnect Emulator** button. For manual pairing, the viewer also has a Connection panel. For easier entry, the helper accepts a private pairing file. Copy the example first:
 
 ```sh
 cp pairing.example.json .pairing.json
@@ -141,4 +143,4 @@ The Mac development workflow has exercised GLB import, embedded image materials,
 
 Windows commands are supplied for reproducibility, but this project has not been run on a Windows host here. A successful x86-64 build is not a Windows runtime pass. Real hand-tracking comfort, physical lighting, sustained frame rate and full visual-design fidelity are separate validation work.
 
-Room, monitor occlusion, source hiding and physical casting exist as experimental code. They are deliberately outside the emulator-only getting-started path. Corner handles, curved monitor occlusion and automatic monitor calibration are not implemented.
+Room is the default emulator getting-started path in v0.7.0. Monitor occlusion, source hiding and physical casting remain optional experiments. Five-handle viewport placement is the primary Room alignment method; align the handles to the Blender 3D viewport image boundary, not the physical monitor. Curved occlusion and marker/depth/touch calibration are implemented experimental paths. See [alignment and validation details](QR_ALIGNMENT.md#manual-alignment-with-five-handles).

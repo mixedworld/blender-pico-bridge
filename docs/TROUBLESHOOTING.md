@@ -7,7 +7,8 @@
 | `adb` is not found | Add Android SDK `platform-tools` to PATH, then open a new shell. PowerShell can run `adb.exe` explicitly. |
 | No emulator appears in `adb devices` | Wait for PICO OS to boot; confirm you started PICO OS 6.1 rather than a phone AVD. Use the vendor/CLI emulator diagnostics. |
 | More than one device appears | Always pass the real serial with `adb -s SERIAL`; do not rely on automatic selection. |
-| “Connection lost” / connection refused | Keep Blender open, press Start Bridge, recreate `adb -s SERIAL reverse tcp:8766 tcp:8766`, and use `http://127.0.0.1:8766` in the viewer. |
+| “Connection lost” / connection refused | Keep Blender open and its bridge running. In add-on 0.6.3+, select **Connect via → USB / Emulator (ADB)** and click **Connect / Reconnect Emulator**. This restores forwarding and sends current pairing. For older versions, recreate `adb -s SERIAL reverse tcp:8766 tcp:8766` and connect to `http://127.0.0.1:8766` with the current token. |
+| Blender cannot find ADB although Terminal can | GUI applications may inherit a different PATH. Set **Edit → Preferences → Add-ons → PICO Blender Bridge → ADB executable** to the installed `platform-tools/adb` (`adb.exe` on Windows). |
 | Pairing fails / unauthorized | Copy the current token from Blender, Disconnect in the viewer, replace the token and Connect again. The example token is not a valid credential. |
 | No geometry is published | Choose a collection containing meshes, or Visible Scene for the default cube. Cameras and lights are intentionally excluded. |
 | Parts do not separate | Explode operates on distinct mesh objects. Use several objects; a joined mesh does not automatically become separate mechanical components. Try the separation slider first. |

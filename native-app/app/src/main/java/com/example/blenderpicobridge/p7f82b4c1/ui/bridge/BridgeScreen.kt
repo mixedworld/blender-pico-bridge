@@ -10,12 +10,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.components.*
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.scene.*
+import com.pico.spatial.ui.platform.containers.*
 import com.pico.spatial.ui.foundation.geometry.NormalizedPoint3D
 import com.pico.spatial.ui.foundation.geometry.DpOffset3D
 import com.pico.spatial.ui.foundation.window.Augment
 import com.pico.spatial.ui.foundation.window.AugmentContentAlignment
-import com.pico.spatial.ui.platform.containers.*
-import kotlinx.coroutines.launch
 
 @Composable
 fun BridgeScreen(modifier: Modifier = Modifier) {
@@ -25,9 +24,9 @@ fun BridgeScreen(modifier: Modifier = Modifier) {
     val state by model.state.collectAsStateWithLifecycle()
     val feed = remember(model) { StateFlowHolder(model.scene) }
     val navigator = LocalSpatialNavigator.current
-    val scope = rememberCoroutineScope()
     LaunchedEffect(model) {
         if (state.endpoint.isNotBlank() && state.token.isNotBlank() && state.phase == "disconnected") model.onEvent(BridgeUiEvent.Connect)
+        else if (state.endpoint.isBlank() || state.token.isBlank()) model.onEvent(BridgeUiEvent.ConnectionPanelChanged(true))
     }
     LaunchedEffect(state.autoRoom) {
         if (state.autoRoom) {
@@ -37,20 +36,14 @@ fun BridgeScreen(modifier: Modifier = Modifier) {
             }
         }
     }
+    LaunchedEffect(navigator) { navigator.openWindowContainer("BlenderTools", tag = "tools") }
     Box(modifier.fillMaxSize()) {
-        // With no depth override, SpatialView consumes the actual resized window depth.
         BridgeScene(feed, Modifier.fillMaxSize(), model::onEvent)
         Augment(anchor = NormalizedPoint3D.TopRightFront, alignment = AugmentContentAlignment.TopLeft,
             offset = DpOffset3D(24.dp, 0.dp, 0.dp), cornerRadius = 32.dp, enableMaterialBackground = true) {
-            BridgeControls(state, model::onEvent) { room ->
-                if (room) scope.launch {
-                    model.onEvent(BridgeUiEvent.RoomPending(true))
-                    when (val result = navigator.openStage("BlenderRoom", StageStyle.Mixed)) {
-                        OpenStageResult.Allowed -> Unit
-                        OpenStageResult.NotAllowed -> { model.onEvent(BridgeUiEvent.RoomPending(false)); model.onEvent(BridgeUiEvent.Feedback("Room mode was not allowed by the system.")) }
-                        is OpenStageResult.Error -> { model.onEvent(BridgeUiEvent.RoomPending(false)); model.onEvent(BridgeUiEvent.Feedback("Room could not open: ${result.reason}")) }
-                    }
-                }
+            ToolsRecoveryButton {
+                model.onEvent(BridgeUiEvent.CollapseChanged(false))
+                navigator.openWindowContainer("BlenderTools", tag = "tools")
             }
         }
     }

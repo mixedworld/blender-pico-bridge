@@ -2,11 +2,22 @@
 import hashlib
 import hmac
 import json
+import math
 import secrets
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+from pathlib import Path
+try:
+    from .render_stream import RenderSignaling
+except ImportError:
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location("bridge_render_stream", Path(__file__).with_name("render_stream.py"))
+    _module = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_module)
+    RenderSignaling = _module.RenderSignaling
 
 
 class BridgeServer:
@@ -14,19 +25,47 @@ class BridgeServer:
         self.token = token or secrets.token_urlsafe(24)
         self.session = secrets.token_hex(12)
         self.lock = threading.Lock()
+        self.connections = set()
         self.state = {"protocol": 1, "session": self.session, "sequence": 0,
                       "revision": None, "playing": False, "error": "Export a model first"}
         self.models = {}
+        self.render_signaling = RenderSignaling()
         self.last_client = 0.0
         self.visibility_hidden = False
         self.visibility_expires = 0.0
+        self.viewport_command = None
+        self.viewport_requests = {}
+        self.camera_command = None
+        self.camera_stream = None
+        self.camera_sequence = -1
+        self.camera_revision = None
+        self.camera_expires = 0.0
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def setup(self):
+                super().setup()
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                with owner.lock:
+                    owner.connections.add(self.connection)
+
+            def finish(self):
+                try:
+                    super().finish()
+                finally:
+                    with owner.lock:
+                        owner.connections.discard(self.connection)
+
             def log_message(self, *_):
                 pass
 
             def do_GET(self):
+                path = urlsplit(self.path).path
+                if path == "/render" and self.client_address[0] in ("127.0.0.1", "::1"):
+                    self.respond(200, Path(__file__).with_name("render_publisher.html").read_bytes(), "text/html; charset=utf-8")
+                    return
                 supplied = self.headers.get("Authorization", "")
                 if not hmac.compare_digest(supplied, "Bearer " + owner.token):
                     self.respond(401, b'{"error":"Pairing token required"}', "application/json")
@@ -34,7 +73,10 @@ class BridgeServer:
                 path = urlsplit(self.path).path
                 with owner.lock:
                     owner.last_client = time.monotonic()
-                    if path == "/v1/state":
+                    if path == "/v1/render-stream":
+                        data = json.dumps({**owner.render_signaling.state(), "capture": owner.state.get("captureViewport")}, separators=(",", ":")).encode()
+                        mime = "application/json"
+                    elif path == "/v1/state":
                         data = json.dumps(owner.state, separators=(",", ":")).encode()
                         mime = "application/json"
                     elif path.startswith("/v1/models/") and path.endswith(".glb"):
@@ -51,18 +93,65 @@ class BridgeServer:
                 if not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + owner.token):
                     self.respond(401, b'{"error":"Pairing token required"}', "application/json")
                     return
-                if urlsplit(self.path).path != "/v1/source-visibility":
+                path = urlsplit(self.path).path
+                if path not in ("/v1/source-visibility", "/v1/viewport-delta", "/v1/view-camera", "/v1/render-stream"):
                     self.respond(404, b'{"error":"Not found"}', "application/json")
                     return
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
-                    if not 0 < length <= 64:
+                    limit = 300000 if path == "/v1/render-stream" else (4096 if path in ("/v1/viewport-delta", "/v1/view-camera") else 64)
+                    if not 0 < length <= limit:
                         raise ValueError("Invalid body size")
                     body = json.loads(self.rfile.read(length))
+                    if path == "/v1/render-stream":
+                        with owner.lock:
+                            accepted = owner.render_signaling.command(body)
+                        self.respond(202 if accepted else 409, b'{"ok":true}' if accepted else b'{"error":"Another render stream is active"}', "application/json")
+                        return
+                    if path == "/v1/view-camera":
+                        owner.validate_view_camera(body)
+                        with owner.lock:
+                            if body['session'] != owner.session or body['revision'] != owner.state.get('revision') or not owner.state.get('cameraControlEnabled'):
+                                self.respond(409, b'{"error":"Camera control disabled or source changed"}', "application/json")
+                                return
+                            now = time.monotonic()
+                            if owner.camera_stream != body['stream']:
+                                if owner.camera_expires > now:
+                                    self.respond(409, b'{"error":"Another camera stream owns the view"}', "application/json")
+                                    return
+                                owner.camera_stream, owner.camera_sequence = body['stream'], -1
+                            if body['sequence'] <= owner.camera_sequence:
+                                self.respond(200, b'{"ok":true,"stale":true}', "application/json")
+                                return
+                            owner.camera_sequence = body['sequence']
+                            owner.camera_revision = body['revision']
+                            owner.camera_command = (now, body)
+                            owner.camera_expires = now + 1.0 if body['active'] else 0.0
+                        self.respond(202, b'{"ok":true}', "application/json")
+                        return
+                    if path == "/v1/viewport-delta":
+                        owner.validate_viewport_delta(body)
+                        with owner.lock:
+                            if body["session"] != owner.session or not owner.state.get("viewportControlEnabled"):
+                                self.respond(409, b'{"error":"Viewport control disabled or session changed"}', "application/json")
+                                return
+                            request_id = body["requestId"]
+                            if request_id in owner.viewport_requests:
+                                self.respond(200, b'{"ok":true,"duplicate":true}', "application/json")
+                                return
+                            if owner.viewport_command is not None:
+                                self.respond(429, b'{"error":"Previous viewport command pending"}', "application/json")
+                                return
+                            owner.viewport_command = (time.monotonic(), body)
+                            owner.viewport_requests[request_id] = True
+                            while len(owner.viewport_requests) > 128:
+                                owner.viewport_requests.pop(next(iter(owner.viewport_requests)))
+                        self.respond(202, b'{"ok":true}', "application/json")
+                        return
                     if not isinstance(body, dict) or set(body) != {"hidden"} or type(body["hidden"]) is not bool:
                         raise ValueError("Expected hidden boolean only")
                 except (ValueError, TypeError):
-                    self.respond(400, b'{"error":"Expected hidden boolean"}', "application/json")
+                    self.respond(400, b'{"error":"Invalid command body"}', "application/json")
                     return
                 with owner.lock:
                     owner.visibility_hidden = body["hidden"]
@@ -71,6 +160,10 @@ class BridgeServer:
 
             def respond(self, status, data, mime):
                 self.send_response(status)
+                if status >= 400:
+                    # Rejected POST bodies may be unread; do not reuse that connection.
+                    self.close_connection = True
+                    self.send_header("Connection", "close")
                 self.send_header("Content-Type", mime)
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("Cache-Control", "no-store")
@@ -94,6 +187,13 @@ class BridgeServer:
         # Content addressing makes identical exports idempotent.
         revision = hashlib.sha256(data).hexdigest()
         with self.lock:
+            if revision != self.state.get("revision"):
+                # An old-revision lease must not block the replacement's camera stream.
+                self.camera_command = None
+                self.camera_stream = None
+                self.camera_sequence = -1
+                self.camera_revision = None
+                self.camera_expires = 0.0
             self.models[revision] = data
             self.state.update(metadata or {})
             self.state["revision"] = revision
@@ -113,7 +213,92 @@ class BridgeServer:
         with self.lock:
             return self.visibility_hidden and time.monotonic() < self.visibility_expires
 
+    @staticmethod
+    def validate_view_camera(body):
+        base = {'session', 'stream', 'sequence', 'revision', 'active'}
+        if not isinstance(body, dict) or type(body.get('active')) is not bool:
+            raise ValueError('Expected camera stream')
+        fields = {'position', 'rotation', 'slopes', 'near', 'far'} if body['active'] else set()
+        if set(body) != base | fields | ({'eyes'} if body['active'] and 'eyes' in body else set()):
+            raise ValueError('Unexpected camera fields')
+        for key in ('session', 'stream'):
+            if not isinstance(body[key], str) or not 1 <= len(body[key]) <= 64:
+                raise ValueError('Invalid identity')
+        if not isinstance(body['revision'], str) or len(body['revision']) != 64 or any(c not in '0123456789abcdef' for c in body['revision']):
+            raise ValueError('Invalid model revision')
+        if type(body['sequence']) is not int or not 0 <= body['sequence'] <= 2**53:
+            raise ValueError('Invalid sequence')
+        if not body['active']:
+            return
+        if 'eyes' in body:
+            eyes = body['eyes']
+            if not isinstance(eyes, list) or len(eyes) != 2:
+                raise ValueError('Expected left and right cameras')
+            for eye in eyes:
+                if not isinstance(eye, dict) or set(eye) != fields:
+                    raise ValueError('Unexpected eye fields')
+                BridgeServer.validate_view_camera({**{k: body[k] for k in base}, **eye})
+        def number(v):
+            return type(v) in (float, int) and math.isfinite(v) and abs(v) <= 1e6
+        for key, count in (('position', 3), ('rotation', 4), ('slopes', 4)):
+            if not isinstance(body[key], list) or len(body[key]) != count or not all(number(v) for v in body[key]):
+                raise ValueError('Invalid camera vector')
+        if not .99 <= sum(v*v for v in body['rotation']) <= 1.01:
+            raise ValueError('Invalid camera rotation')
+        left, right, bottom, top = body['slopes']
+        if not (1e-4 < right-left < 20 and 1e-4 < top-bottom < 20 and max(map(abs, body['slopes'])) < 20):
+            raise ValueError('Invalid frustum')
+        if not number(body['near']) or not number(body['far']) or not 1e-5 <= body['near'] < body['far'] <= 1e6:
+            raise ValueError('Invalid clipping')
+
+    def take_camera_command(self):
+        with self.lock:
+            pending, self.camera_command = self.camera_command, None
+            return pending[1] if pending and time.monotonic()-pending[0] <= .5 else None
+
+    def camera_lease_active(self):
+        with self.lock:
+            return self.camera_expires > time.monotonic() and bool(self.state.get('cameraControlEnabled')) and self.camera_revision == self.state.get('revision')
+
+    @staticmethod
+    def validate_viewport_delta(body):
+        if not isinstance(body, dict) or set(body) != {"session", "requestId", "pan", "rotation", "zoom"}:
+            raise ValueError("Expected bounded viewport delta")
+        for name in ("session", "requestId"):
+            if not isinstance(body[name], str) or not 1 <= len(body[name]) <= 64:
+                raise ValueError("Invalid command identity")
+        def numeric(value):
+            return type(value) in (int, float) and abs(value) <= 1e6 and math.isfinite(value)
+        for name, size in (("pan", 3), ("rotation", 4)):
+            values = body[name]
+            if not isinstance(values, list) or len(values) != size or not all(numeric(v) for v in values):
+                raise ValueError("Invalid vector")
+        if any(abs(v) > 1 for v in body["pan"]):
+            raise ValueError("Pan exceeds one viewport span")
+        if not .99 <= sum(v*v for v in body["rotation"]) <= 1.01:
+            raise ValueError("Rotation must be normalized")
+        if not numeric(body["zoom"]) or not .25 <= body["zoom"] <= 4:
+            raise ValueError("Invalid zoom")
+
+    def take_viewport_command(self):
+        """Called only by Blender's main-thread timer; stale commands never jump the view."""
+        with self.lock:
+            pending, self.viewport_command = self.viewport_command, None
+            if not pending or time.monotonic() - pending[0] > .5:
+                return None
+            return pending[1]
+
     def close(self):
         self.httpd.shutdown()
+        # HTTP/1.1 handlers outlive serve_forever. Close their keep-alive sockets
+        # so a restarted add-on cannot answer requests from stale scene state.
+        with self.lock:
+            connections = list(self.connections)
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            connection.close()
         self.httpd.server_close()
         self.thread.join(timeout=2)

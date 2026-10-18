@@ -1,10 +1,15 @@
 package com.example.blenderpicobridge.p7f82b4c1.ui.bridge.scene
 
 import android.util.Log
+import android.os.SystemClock
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.BuildMonitorCameraUseCase
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.CurvedScreenUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.*
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.InspectionMode
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ExplosionUseCase
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.AnimationTimeUseCase
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.GestureContinuityUseCase
+import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ModelReplacementFitUseCase
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.BridgeUiEvent
 import com.pico.spatial.core.container.SpatialViewContent
 import com.pico.spatial.core.ecs.Entity
@@ -28,11 +33,13 @@ import kotlin.math.max
 import kotlin.math.sqrt
 
 /** Main-thread scene owner. Authored transforms never overwrite the inspection carrier. */
-class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val room: Boolean = false) {
+class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val room: Boolean = false,
+    private val receiveRenderVideo: com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase? = null) {
     val placementOwner = Entity()
     val inspectionCarrier = Entity()
     private var fittedSceneRoot = Entity()
     private var model: Entity? = null
+    private val modelVisibility = NativeModelVisibility()
     private var content: SpatialViewContent? = null
     private var shape: ShapeResource? = null
     private var physics: PhysicsMaterialResource? = null
@@ -40,12 +47,21 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private val nodes = mutableMapOf<String, Entity>()
     private val animationTime = AnimationTimeUseCase()
     private val explosionLayer = ExplosionUseCase()
+    private val gestureContinuity = GestureContinuityUseCase()
     private var mode = InspectionMode.SCALE
     private var explosion = 0f
     private var latest: FramePacket? = null
     private var reservedRadius = 0f
     private val grabBounds = Entity()
     private var monitor: MonitorThreshold? = null
+    private var renderWindow: RenderWindowScene?=null
+    private var renderState=RenderWindowState()
+    private var headPosition: Vector3?=null
+    private var headRotation: Quat?=null
+    private var renderProjectionValid=true
+    private var monitorHandles: MonitorHandles? = null
+    private var manualHandles=false
+    private var modelPickingSuspended=false
     private var calibration = MonitorCalibration()
     private var commandSequence = 0
     private var hover = false
@@ -56,6 +72,8 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private var homePosition = Vector3(0f, 1.2f, -1.5f)
     private var homeRotation = Quat()
     private var stagedPose: InspectionPose? = null
+    private var anchorReference: RigidPose? = null
+    private var pendingAnchoredPose: Pair<String?,InspectionPose?>? = null
     private var collisionKey = emptyList<Float>()
     var tools: Entity? = null
     private var revision: String? = null
@@ -63,6 +81,12 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private var half = Vector3.ZERO
     private var resetCounter = 0
     private var inspectionScale = 1f
+    private var linkedViewport = false
+    private var linkedSnapshot: InspectionPose? = null
+    private var linkedDistance = 1f
+    private var linkedRevision: String? = null
+    private var lastCameraFrameAt=0L
+    private var renderFollowingValid=true
     private val transform get() = inspectionCarrier.components[TransformComponent::class.java]!!
 
     fun attach(value: SpatialViewContent) {
@@ -84,6 +108,11 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
 
     /** Place once from a valid tracked viewer; afterwards the scene stays world locked. */
     fun placeForViewer(position: Vector3, rotation: Quat) {
+        if(room) {
+            headPosition=position;headRotation=rotation
+            renderWindow?.ensurePlaced(calibration,position,rotation)
+            if(!linkedViewport) updateRenderFollowing()
+        }
         if (!room || viewerPlaced || content == null) return
         viewerPlaced = true
         homePosition = placementOwner.convertPositionFrom(position + rotation.rotateVector(Vector3(0f, -.2f, -1.5f)), null)
@@ -99,6 +128,154 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         }
         Log.i("BlenderBridge", "VIEWER_PLACEMENT head=$position rotation=$rotation home=$homePosition tracking=true worldLocked=true")
     }
+
+    private fun updateRenderFollowing() {
+        renderFollowingValid=true
+        if(!room || !renderState.enabled || !renderState.faceUser)return
+        val head=headPosition ?: return
+        val window=renderWindow ?: return
+        val points=if(renderState.autoFit) {
+            // Use the model's fit-owner axes, then convert all eight corners.
+            // A container AABB would inflate the sphere as the model rotates.
+            val bounds=model?.getVisualBounds(fittedSceneRoot,true,true)
+            if(bounds==null || bounds.isEmpty()) { renderFollowingValid=false;emptyList() }
+            else (0 until 8).map { i -> fittedSceneRoot.convertPositionTo(Vector3(
+                if(i and 1==0)bounds.min.x else bounds.max.x,
+                if(i and 2==0)bounds.min.y else bounds.max.y,
+                if(i and 4==0)bounds.min.z else bounds.max.z),null) }
+        } else emptyList()
+        val separation=(latest?.renderStereoEyeSeparationMm ?: 0f)/1000f
+        val eyes=if(separation>0f && headRotation!=null)listOf(-.5f,.5f).map {
+            head+headRotation!!.rotateVector(Vector3(it*separation,0f,0f))
+        } else emptyList()
+        renderFollowingValid=renderFollowingValid && window.follow(head,points,eyes)
+        if(!renderFollowingValid)window.setProjectionValid(false)
+        else if(renderState.mode==RenderWindowMode.LIVE_DISPLAY)window.setProjectionValid(true)
+    }
+
+    /** Screen-aligned view in the exported model's coordinate frame; Entity conversions run on main. */
+    fun trackView(headPosition: Vector3) {
+        if(!room || !linkedViewport || model==null) return
+        val remote=renderState.enabled && renderState.mode==RenderWindowMode.SCENE_ALIGNED
+        updateRenderFollowing()
+        if(remote && !renderFollowingValid) {
+            if(renderProjectionValid) { renderProjectionValid=false;event(BridgeUiEvent.RenderProjection(false)) }
+            return
+        }
+        if(!remote && (!calibration.enabled || !calibration.locked))return
+        val now=SystemClock.elapsedRealtime()
+        if(now-lastCameraFrameAt<11) return
+        lastCameraFrameAt=now
+        val screen=if(remote) renderWindow?.anchor ?: return else monitor?.anchor ?: return
+        try {
+            val eye=screen.convertPositionFrom(headPosition,null)
+            val position=fittedSceneRoot.convertPositionFrom(headPosition,null)
+            val rotation=fittedSceneRoot.convertRotationFrom(screen.convertRotationTo(Quat(),null),null)
+            val scale=fittedSceneRoot.convertScaleTo(Vector3(1f,1f,1f),null)
+            require(scale.x>0 && abs(scale.y-scale.x)<scale.x*.001f && abs(scale.z-scale.x)<scale.x*.001f)
+            var frame=if(remote) {
+                val screenScale=screen.convertScaleTo(Vector3(1f,1f,1f),null).x
+                com.example.blenderpicobridge.p7f82b4c1.domain.usecase.BuildRenderCameraUseCase()(
+                    (eye*screenScale).values(),position.values(),rotation.values(),scale.x,.9f*screenScale,
+                    renderState.aspect,latest?.renderCrop ?: listOf(0f,0f,1f,1f))
+            } else BuildMonitorCameraUseCase()(eye.values(),position.values(),rotation.values(),scale.x,calibration,hideSource)
+            if(remote && (latest?.renderStereoEyeSeparationMm ?: 0f)>0f) {
+                // Manual symmetric rig in tracked HMD-local metres, not the screen's local X.
+                // Convert each eye through public Entity APIs before building its off-axis frustum.
+                val separation=latest!!.renderStereoEyeSeparationMm/1000f
+                val headQ=headRotation ?: return
+                val screenScale=screen.convertScaleTo(Vector3(1f,1f,1f),null).x
+                val eyes=listOf(-.5f,.5f).map { side ->
+                    val globalEye=headPosition+headQ.rotateVector(Vector3(side*separation,0f,0f))
+                    com.example.blenderpicobridge.p7f82b4c1.domain.usecase.BuildRenderCameraUseCase()(
+                        (screen.convertPositionFrom(globalEye,null)*screenScale).values(),
+                        fittedSceneRoot.convertPositionFrom(globalEye,null).values(),rotation.values(),scale.x,
+                        .9f*screenScale,renderState.aspect,latest!!.renderCrop)
+                }
+                frame=frame.copy(eyes=eyes)
+            }
+            if(remote) {
+                renderWindow?.setProjectionValid(true)
+                if(!renderProjectionValid) { renderProjectionValid=true;event(BridgeUiEvent.RenderProjection(true)) }
+            }
+            event(BridgeUiEvent.TrackedCameraFrame(frame))
+        } catch(_: IllegalArgumentException) {
+            if(remote) {
+                renderWindow?.setProjectionValid(false)
+                if(renderProjectionValid) { renderProjectionValid=false;event(BridgeUiEvent.RenderProjection(false)) }
+                return
+            }
+            event(BridgeUiEvent.LinkViewport(false))
+            event(BridgeUiEvent.Feedback("Camera sync stopped. Stand in front of the locked monitor; use uniform model scale."))
+        }
+    }
+
+    /** Contacts are Stage/global meters; the monitor anchor is owned by placementOwner. */
+    fun monitorFromTouches(request: com.example.blenderpicobridge.p7f82b4c1.domain.model.TouchAlignmentRequest,
+        points: List<List<Float>>): MonitorCalibration {
+        check(room && content != null)
+        val fit=com.example.blenderpicobridge.p7f82b4c1.domain.usecase.FitTouchedScreenUseCase()(points,request.board)
+        val p=placementOwner.convertPositionFrom(Vector3(fit.center[0],fit.center[1],fit.center[2]),null)
+        val q=placementOwner.convertRotationFrom(Quat(fit.rotation[0],fit.rotation[1],fit.rotation[2],fit.rotation[3]),null)
+        return calibration.copy(enabled=true,editing=true,locked=false,width=fit.width,height=fit.height,curveDegrees=0f,position=p.values(),quaternion=q.values())
+    }
+
+    /** The calibrated pose uses exactly the HMD provider's global Full Space frame. */
+    fun monitorFromWorld(request: WorldMonitorRequest): MonitorCalibration {
+        check(room && content!=null)
+        val world=request.alignment.globalFromMarker
+        val q=world.quaternion()
+        val position=placementOwner.convertPositionFrom(Vector3(world.t[0].toFloat(),world.t[1].toFloat(),world.t[2].toFloat()),null)
+        val rotation=placementOwner.convertRotationFrom(Quat(q[0].toFloat(),q[1].toFloat(),q[2].toFloat(),q[3].toFloat()),null)
+        Log.i("BridgeWorld","apply samples=${request.alignment.samples} positionRms=${request.alignment.positionRms} angleRms=${request.alignment.angleRms} owner=placementOwner")
+        return calibration.copy(enabled=true,editing=false,locked=true,width=request.estimate.arcWidth,height=request.estimate.height,
+            curveDegrees=request.estimate.curveDegrees,position=position.values(),quaternion=rotation.values())
+    }
+
+    /** Capture all five controls in Stage metres through the public Entity conversion APIs. */
+    fun alignmentSnapshot(request: AlignmentSaveRequest): AlignmentSnapshot {
+        check(room && content!=null)
+        fun global(p: List<Float>)=placementOwner.convertPositionTo(p.vector(),null).values()
+        fun rotation(q: List<Float>)=placementOwner.convertRotationTo(q.quat(),null).values()
+        val stage=stagedPose?.let { it.copy(position=global(it.position),quaternion=rotation(it.quaternion)) }
+        return AlignmentSnapshot(request.monitor.copy(position=global(request.monitor.position),quaternion=rotation(request.monitor.quaternion)),
+            request.handles.copy(corners=request.handles.corners.map(::global)),stage,revision)
+    }
+
+    /** Called only on main, only after PICO has localized the saved UUID in the current Stage. */
+    fun anchoredAlignment(saved: SavedAlignment, reference: RigidPose, restoring: Boolean) {
+        check(room && content!=null)
+        val space=com.example.blenderpicobridge.p7f82b4c1.domain.usecase.AlignmentSpaceUseCase()
+        fun local(p: List<Float>)=placementOwner.convertPositionFrom(p.vector(),null).values()
+        fun rotation(q: List<Float>)=placementOwner.convertRotationFrom(q.quat(),null).values()
+        fun localPose(p: InspectionPose)=p.copy(position=local(p.position),quaternion=rotation(p.quaternion))
+        val previous=anchorReference
+        if(previous!=null) {
+            // A room recenter moves the frame, the current inspection and Reset take together.
+            val delta=reference*previous.inverse()
+            fun moved(p: InspectionPose): InspectionPose {
+                val world=p.copy(position=placementOwner.convertPositionTo(p.position.vector(),null).values(),
+                    quaternion=placementOwner.convertRotationTo(p.quaternion.quat(),null).values())
+                return localPose(space.inspection(world,delta))
+            }
+            if(model!=null) restorePose(moved(snapshot()))
+            stagedPose=stagedPose?.let(::moved)
+            pendingAnchoredPose=pendingAnchoredPose?.let { it.first to it.second?.let(::moved) }
+        }
+        val global=space(saved.relative,reference)
+        val localized=global.copy(monitor=global.monitor.copy(position=local(global.monitor.position),quaternion=rotation(global.monitor.quaternion)),
+            handles=global.handles.copy(corners=global.handles.corners.map(::local)),stagedPose=global.stagedPose?.let(::localPose))
+        if(previous==null && restoring) {
+            restored=true // Initial HMD placement must not overwrite the localized frame or its fit.
+            pendingAnchoredPose=localized.revision to localized.stagedPose
+        }
+        anchorReference=reference
+        calibration=localized.monitor.copy(enabled=true,editing=false,locked=true)
+        event(BridgeUiEvent.AlignmentRestored(calibration,localized.handles))
+        Log.i("BlenderBridge","ALIGNMENT_LOCALIZED restoring=$restoring corners=${localized.handles.corners.size} curve=${calibration.curveDegrees}")
+    }
+
+    fun detachAlignmentAnchor() { anchorReference=null;pendingAnchoredPose=null }
 
     fun measure() {
         if (room) return
@@ -145,10 +322,13 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             val position = transform.position
             val available = min(half.x - abs(position.x), min(half.y - abs(position.y), half.z - abs(position.z)))
             require(room || available > .001f) { "Reset the view to provide space for this model" }
-            val fit = if (room) 1f else available / (bounds.boundingSphereRadius * 1.2f * inspectionScale)
+            val previousPose = if (room && model != null) snapshot() else null
+            val replacementFit = ModelReplacementFitUseCase()(room, previousPose, bounds.center.values(),
+                bounds.boundingSphereRadius, available, inspectionScale)
+            val fit = replacementFit.scale
             nextFit.components[TransformComponent::class.java]!!.apply {
                 scaleVector = Vector3(fit, fit, fit)
-                this.position = bounds.center * -fit
+                this.position = replacementFit.offset.vector()
             }
             val readyBounds = incoming.getVisualBounds(placementOwner, true, false)
             // Preview initially fits the current assembled model. Separation may refit later.
@@ -156,18 +336,19 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             // Sphere from both measured visual envelopes reserves all intermediate amounts
             // and every inspection rotation; collision remains usable on separated parts.
             val currentBounds = incoming.getVisualBounds(inspectionCarrier, true, false)
-            nextShape = ShapeResource.createBox(currentBounds.halfExtent * 2f)
+            nextShape = ShapeResource.createBox(currentBounds.halfExtent * 2f).sceneOwned()
             grabBounds.components[TransformComponent::class.java]!!.position = currentBounds.center
             Log.i("BlenderBridge", "EXPLOSION_ENVELOPE parts=${packet.explodeParts.size} sourceMin=${bounds.min} sourceMax=${bounds.max} fullMin=${expanded.min} fullMax=${expanded.max} fit=$fit owner=placementOwner safeHalf=$half fullVisualMin=${readyBounds.min} fullVisualMax=${readyBounds.max} fullContained=${within(readyBounds)}")
             applyPose(packet, nextControllers, nextNodes, explosion)
             require(within(incoming.getVisualBounds(placementOwner, true, false))) { "Inspection pose does not fit" }
-            if (physics == null) physics = PhysicsMaterialResource()
-            grabBounds.components.set(CollisionComponent(collisionShape = listOf(nextShape), physicsMaterial = physics!!))
+            if (physics == null) physics = PhysicsMaterialResource().sceneOwned()
+            if(!modelPickingSuspended) grabBounds.components.set(CollisionComponent(collisionShape = listOf(nextShape), physicsMaterial = physics!!))
             val previous = fittedSceneRoot
             val previousShape = shape
             val previousControllers = controllers.toList()
             fittedSceneRoot = nextFit
             model = incoming
+            modelVisibility.bind(incoming)
             shape = nextShape
             nodes.clear(); nodes.putAll(nextNodes)
             controllers.clear(); controllers.addAll(nextControllers)
@@ -186,6 +367,8 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             Log.i("BlenderBridge", "MODEL revision=${revision?.take(8)} nodes=${nodes.size} textures=${packet.textureCount} controllers=${controllers.size} fit=$fit half=$half contained=${contained()}")
             event(BridgeUiEvent.ModelReady(packet.revision!!, fit))
             event(BridgeUiEvent.InspectionChanged(inspectionScale))
+            if (previousPose != null) savePose()
+            Log.i("BlenderBridge", "MODEL_SWAP preserveRoomFit=${previousPose!=null} fit=$fit offset=${replacementFit.offset} carrier=${transform.position} inspectionScale=$inspectionScale")
         } catch (error: Exception) {
             if (!committed) {
                 nextControllers.forEach { runCatching { it.stop(); it.close() } }
@@ -212,7 +395,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         sequence = packet.sequence
         latest = packet
         applyPose(packet, controllers, nodes)
-        if (!contained()) {
+        if (!linkedViewport && !contained()) {
             reset()
             // Animated bounds can exceed the initial sphere. Keep the current pose contained.
             val bounds = model?.getVisualBounds(inspectionCarrier, true, true) ?: return
@@ -226,6 +409,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             }
             event(BridgeUiEvent.InspectionChanged(1f, "Animated model refitted to the available volume."))
         }
+        updateRenderFollowing()
         if (force || sequence % 10L == 0L) { updateGrabBounds(); updateSourceVisibility() }
         if (sequence % 100L == 0L && room) Log.i("BlenderBridge", "POSE_DIAGNOSTIC position=${transform.position} rotation=${transform.quaternion} visible=${model?.enabled} fitEnabled=${fittedSceneRoot.enabled} sourceHidden=$sourceHidden")
         if (sequence % 20L == 0L) Log.i("BlenderBridge", "FRAME frame=${packet.frame} time=${packet.timeSeconds} playing=${packet.playing} sequence=$sequence contained=${contained()}")
@@ -257,8 +441,13 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             abs(bounds.center.y) + bounds.halfExtent.y <= half.y + .001f &&
             abs(bounds.center.z) + bounds.halfExtent.z <= half.z + .001f)
 
+    fun gesturePointers(ids: Set<Long>) = gestureContinuity.pointers(ids)
+    fun beginGesture() = gestureContinuity.rebase()
+
     fun manipulate(value: SpatialTransformValue) {
         if (model == null) return
+        val target=value.targetEntity ?: return
+        if(!accepts(target)) return
         Log.i("BlenderBridge", "HAND_TRANSFORM drag=${value.dragAmount} scale=${value.scaleValue} rotation=${value.rotation}")
         val owner = content ?: return
         measure()
@@ -271,14 +460,38 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         // Full public conversion accounts for the reflection between View and ECS axes.
         val converted = owner.convertRotation(value.rotation.toQuaternion(), ViewCoordinateSpace.Global, owner.localSpatialCoordinateSpace)
         val rotation = converted * basis.conjugate()
+        if (!gestureContinuity.accept((moved-origin).values(),value.scaleValue,rotation.values())) {
+            Log.i("BlenderBridge", "HAND_REBASE skipped discontinuous or transition sample")
+            return
+        }
+        if(renderWindow?.owns(target)==true) {
+            renderWindow?.manipulate(moved-origin,rotation,value.scaleValue)
+            return
+        }
         if (value.targetEntity == tools) {
             tools?.components?.get(TransformComponent::class.java)?.apply { position = position + moved - origin; quaternion = rotation * quaternion }
             return
         }
-        if (calibration.editing && value.targetEntity == monitor?.plane) {
+        monitorHandles?.index(value.targetEntity)?.let { index ->
+            event(BridgeUiEvent.MonitorHandleMoved(index,(moved-origin).values()))
+            return
+        }
+        if (calibration.editing && !manualHandles && monitor?.owns(value.targetEntity)==true) {
             monitor?.anchor?.components?.get(TransformComponent::class.java)?.apply {
                 position = position + moved - origin; quaternion = rotation * quaternion
                 event(BridgeUiEvent.MonitorPose(position.values(), quaternion.values()))
+            }
+            return
+        }
+        if (linkedViewport && !room) {
+            val anchor = if (room) homeRotation else Quat()
+            val pan = anchor.conjugate().rotateVector(moved-origin) * (1f / max(if (room) calibration.height else half.y*2f,.1f))
+            val relative = anchor.conjugate()*rotation*anchor
+            val zoom = if (mode == InspectionMode.SCALE) value.scaleValue else 1f
+            if (zoom.isFinite() && zoom > 0f) event(BridgeUiEvent.MoveViewport(ViewportDelta(pan.values(),relative.values(),zoom)))
+            if (mode == InspectionMode.EXPLODE) {
+                val amount = explosionLayer.fromSpan(explosion,value.scaleValue)
+                setInspection(mode,amount); event(BridgeUiEvent.ExplosionChanged(amount))
             }
             return
         }
@@ -290,7 +503,9 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             inspectionScale = (inspectionScale * value.scaleValue).coerceIn(.1f, 10f)
         }
         transform.position = oldPosition + moved - origin
-        transform.quaternion = rotation * oldRotation
+        val nextRotation = rotation * oldRotation
+        val rotationLength = sqrt(nextRotation.x*nextRotation.x + nextRotation.y*nextRotation.y + nextRotation.z*nextRotation.z + nextRotation.w*nextRotation.w)
+        transform.quaternion = Quat(nextRotation.x/rotationLength,nextRotation.y/rotationLength,nextRotation.z/rotationLength,nextRotation.w/rotationLength)
         transform.scaleVector = Vector3(inspectionScale, inspectionScale, inspectionScale)
         if (!contained()) {
             inspectionScale = oldScale
@@ -298,32 +513,73 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
             transform.quaternion = oldRotation
             transform.scaleVector = Vector3(oldScale, oldScale, oldScale)
             event(BridgeUiEvent.InspectionChanged(oldScale, "Volume limit reached. Enlarge the window or reset the view."))
-        } else { event(BridgeUiEvent.InspectionChanged(inspectionScale)); savePose(); updateSourceVisibility() }
+        } else {
+            event(BridgeUiEvent.InspectionChanged(inspectionScale)); savePose(); updateSourceVisibility()
+            updateRenderFollowing();headPosition?.let(::trackView)
+        }
     }
 
     fun accepts(entity: Entity): Boolean {
-        if (entity == monitor?.plane || entity == tools) return true
+        if (entity == tools) return true
+        if(renderWindow?.owns(entity)==true)return true
+        if(monitorHandles?.index(entity)!=null) return true
+        if (monitor?.owns(entity)==true) return calibration.editing && !manualHandles
+        if(calibration.editing && manualHandles) return false
         var current: Entity? = entity
         while (current != null) { if (current == inspectionCarrier) return true; current = current.getParent() }
         return false
     }
 
     fun preferences(feed: SceneFeed) {
-        if (hover != feed.hover) {
-            hover = feed.hover
+        val seedRenderCamera=room && feed.linkViewport &&
+            (!linkedViewport || renderState!=feed.renderWindow)
+        renderState=feed.renderWindow
+        if(room && receiveRenderVideo!=null && renderState.enabled) {
+            if(renderWindow==null || kotlin.math.abs(renderWindow!!.aspect-renderState.aspect)>.001f) {
+                val pose=renderWindow?.pose();val manual=renderWindow?.manualPlacement();renderWindow?.close()
+                renderWindow=RenderWindowScene(placementOwner,renderState.aspect,receiveRenderVideo) { event(BridgeUiEvent.RenderStatus(it)) }
+                pose?.let { renderWindow?.restore(it) }
+                renderWindow?.restoreManualPlacement(manual)
+            }
+        }
+        renderWindow?.update(renderState,feed.renderPairing,feed.monitor,headPosition,headRotation)
+        if (feed.linkViewport != linkedViewport && model != null) {
+            linkedViewport = feed.linkViewport
+            if (linkedViewport) {
+                linkedSnapshot=snapshot();linkedDistance=latest?.viewport?.distance ?: 1f;linkedRevision=revision
+
+            }
+            else { if (!room && linkedRevision == revision) linkedSnapshot?.let(::restorePose); linkedSnapshot = null; linkedRevision = null }
+        }
+        modelVisibility.setVisible(feed.modelVisible)
+        val showHover = feed.hover && feed.modelVisible
+        if (hover != showHover) {
+            hover = showHover
             if (hover) inspectionCarrier.components.set(HoverEffectComponent())
             else inspectionCarrier.components.remove(HoverEffectComponent::class.java)
         }
-        hideSource = feed.hideSource
+        hideSource = feed.hideSource && !feed.monitor.editing && !feed.renderWindow.enabled && (room || !linkedViewport)
         calibration = feed.monitor
-        if (room && calibration.enabled) {
+        setModelPickingSuspended(room && calibration.editing)
+        manualHandles=room && feed.monitorHandles!=null && calibration.editing && !calibration.locked
+        if(room && monitorHandles==null && feed.monitorHandles!=null) monitorHandles=MonitorHandles(placementOwner)
+        monitorHandles?.update(if(room) feed.monitorHandles else null,calibration)
+        if (room && calibration.enabled && feed.touchAlignment == null) {
             if (monitor == null) monitor = MonitorThreshold(placementOwner).also { mask -> model?.let(mask::bindModel) }
             model?.let { monitor?.bindModel(it) }
-            monitor?.update(calibration)
+            monitor?.update(calibration,manualHandles,feed.monitorHandles)
         } else { monitor?.update(calibration.copy(enabled = false)); monitor?.unbindModel() }
         if (!restored && model != null) {
             restored = true
             (if (room) feed.roomPose else feed.previewPose)?.let(::restorePose)
+        }
+        if(model!=null && pendingAnchoredPose!=null && calibration.enabled && calibration.locked) {
+            val pending=pendingAnchoredPose!!;pendingAnchoredPose=null
+            if(pending.first==revision && pending.second!=null) {
+                stagedPose=pending.second;restorePose(pending.second!!)
+                event(BridgeUiEvent.Feedback("Saved viewport frame, curvature and staged fit restored."))
+            } else stageTake() // A different scene gets a fresh fit behind the retained frame.
+            commandSequence=feed.commandSequence // Do not replay an old Stage command after restoring.
         }
         if (model != null && commandSequence != feed.commandSequence) {
             commandSequence = feed.commandSequence
@@ -346,7 +602,25 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
                 SceneCommand.NONE -> Unit
             }
         }
+        if (linkedViewport && room && !feed.renderWindow.enabled && stagedPose==null && calibration.enabled && calibration.locked && model!=null) stageTake()
+        if (linkedViewport && !room) latest?.let { packet ->
+            val view = packet.viewport
+            val source = linkedSnapshot
+            if (view != null && source != null && packet.viewQuaternion != null) {
+                val fit = (source.fitScale*linkedDistance/view.distance).coerceIn(.00001f,1000f)
+                val pivot = Vector3(view.pivot[0],view.pivot[2],-view.pivot[1])
+                transform.position = source.position.vector()
+                transform.quaternion = (if (room) homeRotation else Quat())*packet.viewQuaternion.quat()
+                transform.scaleVector = Vector3(1f,1f,1f); inspectionScale = 1f
+                fittedSceneRoot.components[TransformComponent::class.java]!!.apply { scaleVector=Vector3(fit,fit,fit);position=pivot*(-fit) }
+                updateGrabBounds()
+            }
+        }
         updateSourceVisibility()
+        updateRenderFollowing()
+        // A stationary emulator may emit no new HMD sample after enabling/recentering.
+        // Seed once from the last valid tracked pose; later motion retains the fast path.
+        if(seedRenderCamera && renderState.enabled && linkedViewport) headPosition?.let(::trackView)
     }
 
     private fun fit(scale: Float) {
@@ -372,7 +646,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         fit(1f)
         var bounds = model!!.getVisualBounds(planeOwner, true, true)
         require(!bounds.isEmpty()) { "No visible model to stage" }
-        val scale = min(calibration.width * .8f / (bounds.halfExtent.x * 2f), calibration.height * .8f / (bounds.halfExtent.y * 2f))
+        val scale = min(CurvedScreenUseCase(calibration.width,calibration.height,calibration.curveDegrees).chord * .8f / (bounds.halfExtent.x * 2f), calibration.height * .8f / (bounds.halfExtent.y * 2f))
         fit(scale)
         bounds = model!!.getVisualBounds(planeOwner, true, true)
         val delta = Vector3(-bounds.center.x, -bounds.center.y, -.03f - bounds.max.z)
@@ -386,7 +660,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private fun fitBehindMonitor() {
         val owner = monitor?.anchor ?: return
         var bounds = model?.getVisualBounds(owner, true, true) ?: return
-        val ratio = min(calibration.width * .8f / (bounds.halfExtent.x * 2f), calibration.height * .8f / (bounds.halfExtent.y * 2f))
+        val ratio = min(CurvedScreenUseCase(calibration.width,calibration.height,calibration.curveDegrees).chord * .8f / (bounds.halfExtent.x * 2f), calibration.height * .8f / (bounds.halfExtent.y * 2f))
         if (ratio < .999f) {
             val fitted = fittedSceneRoot.components[TransformComponent::class.java]!!
             fit(fitted.scaleVector.x * ratio)
@@ -400,7 +674,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private fun updateSourceVisibility() {
         val anchor = monitor?.anchor
         val hidden = room && hideSource && calibration.locked && stagedPose != null && anchor != null &&
-            (model?.getVisualBounds(anchor, true, true)?.min?.z ?: -1f) > .015f
+            (model?.getVisualBounds(anchor, true, true)?.min?.z ?: -1f) > CurvedScreenUseCase(calibration.width,calibration.height,calibration.curveDegrees).edgeDepth+.015f
         if (hidden != sourceHidden) {
             sourceHidden = hidden
             Log.i("BlenderBridge", "SOURCE_VISIBILITY requested=$hidden carrier=${transform.position} modelEnabled=${model?.enabled}")
@@ -410,7 +684,7 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
     private fun logMonitorBounds() {
         val anchor = monitor?.anchor ?: return
         val bounds = model?.getVisualBounds(anchor, true, true) ?: return
-        val fitsXY = abs(bounds.center.x) + bounds.halfExtent.x <= calibration.width * .4f + .001f &&
+        val fitsXY = abs(bounds.center.x) + bounds.halfExtent.x <= CurvedScreenUseCase(calibration.width,calibration.height,calibration.curveDegrees).chord * .4f + .001f &&
             abs(bounds.center.y) + bounds.halfExtent.y <= calibration.height * .4f + .001f
         Log.i("BlenderBridge", "MONITOR_TAKE owner=monitorAnchor min=${bounds.min} max=${bounds.max} plane=${calibration.width}x${calibration.height} planeWorld=${anchor.convertPositionTo(Vector3.ZERO, null)} modelWorld=${model!!.getVisualBounds(null, true, true).center} gap=.03 behind=${bounds.max.z <= -.029f} fitsXY=$fitsXY visual=UNOBSERVED")
     }
@@ -427,24 +701,47 @@ class BridgeSceneRuntime(private val event: (BridgeUiEvent) -> Unit, private val
         fittedSceneRoot.components[TransformComponent::class.java]!!.apply { scaleVector = Vector3(pose.fitScale, pose.fitScale, pose.fitScale); position = pose.fitPosition.vector() }
         event(BridgeUiEvent.FitChanged(pose.fitScale)); event(BridgeUiEvent.InspectionChanged(pose.scale)); updateGrabBounds(); savePose()
     }
+    private fun setModelPickingSuspended(suspended: Boolean) {
+        if(modelPickingSuspended==suspended) return
+        modelPickingSuspended=suspended
+        if(suspended) {
+            grabBounds.components.remove(InteractableComponent::class.java)
+            grabBounds.components.remove(CollisionComponent::class.java)
+        } else {
+            grabBounds.components.set(InteractableComponent())
+            collisionKey=emptyList() // Restore even if the staged bounds have not changed.
+            updateGrabBounds()
+        }
+        Log.i("BlenderBridge","MODEL_PICKING suspended=$suspended collider=${grabBounds.components[CollisionComponent::class.java]!=null}")
+    }
     private fun updateGrabBounds() {
+        if(modelPickingSuspended) return
         val bounds = model?.getVisualBounds(inspectionCarrier, true, true) ?: return
         if (bounds.isEmpty()) return
         val key = bounds.center.values() + bounds.halfExtent.values()
         if (collisionKey.size == key.size && key.indices.all { abs(key[it] - collisionKey[it]) < .01f }) return
-        val next = ShapeResource.createBox(bounds.halfExtent * 2f)
+        val next = ShapeResource.createBox(bounds.halfExtent * 2f).sceneOwned()
         grabBounds.components[TransformComponent::class.java]!!.position = bounds.center
         grabBounds.components.set(CollisionComponent(listOf(next), physics!!))
         shape?.close(); shape = next; collisionKey = key
         Log.i("BlenderBridge", "GRAB_BOUNDS owner=inspectionCarrier center=${bounds.center} size=${bounds.halfExtent * 2f}")
+
+    }
+
+    fun setRenderActive(active: Boolean) {
+        renderWindow?.setActive(active)
+        if(!active && renderState.enabled) event(BridgeUiEvent.RenderStatus(RenderVideoStatus("Render paused while app is hidden")))
     }
 
     fun close() {
+        renderWindow?.close();renderWindow=null
         if (model != null) savePose()
+        monitorHandles?.close();monitorHandles=null
         monitor?.close(); monitor = null
         controllers.forEach { it.stop(); it.close() }
         controllers.clear()
         content?.removeEntity(placementOwner)
+        modelVisibility.clear()
         placementOwner.destroy(true)
         shape?.close()
         physics?.close()

@@ -12,6 +12,9 @@ import java.net.URI
 import java.security.MessageDigest
 
 class HttpBridgeRepository(context: Context) : BridgeRepository {
+    private var cameraSamples = 0
+    private var cameraTotalNanos = 0L
+    private var cameraMaxNanos = 0L
     private val prefs = context.getSharedPreferences("pairing", Context.MODE_PRIVATE)
     private val directory = File(context.cacheDir, "bridge-models").apply { mkdirs() }
     override fun savedPairing() = Pairing(prefs.getString("endpoint", "") ?: "", prefs.getString("token", "") ?: "")
@@ -27,6 +30,7 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         while (currentCoroutineContext().isActive) {
             try {
                 val packet = decode(JSONObject(String(request(pairing, "/v1/state", 4 * 1024 * 1024))))
+                require(pairing.expectedSession == null || pairing.expectedSession == packet.session) { "Pairing QR expired. Scan the current Blender QR." }
                 if (packet.session != session) {
                     session = packet.session
                     sequence = -1
@@ -107,6 +111,54 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         }
     }
 
+    override suspend fun viewportDelta(pairing: Pairing, session: String, requestId: String, delta: ViewportDelta): Unit = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("session",session).put("requestId",requestId)
+            .put("pan",JSONArray(delta.pan)).put("rotation",JSONArray(delta.rotation)).put("zoom",delta.zoom)
+        val connection = URI(pairing.endpoint+"/v1/viewport-delta").toURL().openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod="POST";connection.doOutput=true;connection.connectTimeout=2000;connection.readTimeout=2000
+            connection.instanceFollowRedirects=false
+            connection.setRequestProperty("Authorization","Bearer ${pairing.token}")
+            connection.setRequestProperty("Content-Type","application/json")
+            connection.outputStream.use { it.write(body.toString().toByteArray()) }
+            check(connection.responseCode in listOf(200,202)) { "Viewport command unavailable" }
+        } finally { connection.disconnect() }
+    }
+
+    override suspend fun viewCamera(pairing: Pairing,session: String,revision: String,stream: String,sequence: Long,camera: TrackedViewportCamera?): Unit = withContext(Dispatchers.IO) {
+        val started = System.nanoTime()
+        val body=JSONObject().put("session",session).put("revision",revision).put("stream",stream).put("sequence",sequence).put("active",camera!=null)
+        camera?.let { body.put("position",JSONArray(it.position)).put("rotation",JSONArray(it.rotation))
+            .put("slopes",JSONArray(it.slopes)).put("near",it.near).put("far",it.far)
+            if(it.eyes.isNotEmpty()) body.put("eyes",JSONArray(it.eyes.map { eye -> JSONObject()
+                .put("position",JSONArray(eye.position)).put("rotation",JSONArray(eye.rotation))
+                .put("slopes",JSONArray(eye.slopes)).put("near",eye.near).put("far",eye.far) })) }
+        val connection=URI(pairing.endpoint+"/v1/view-camera").toURL().openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod="POST";connection.doOutput=true;connection.connectTimeout=1000;connection.readTimeout=1000
+            connection.instanceFollowRedirects=false
+            connection.setRequestProperty("Authorization","Bearer ${pairing.token}")
+            connection.setRequestProperty("Content-Type","application/json")
+            val payload = body.toString().toByteArray()
+            connection.setFixedLengthStreamingMode(payload.size)
+            connection.outputStream.use { it.write(payload) }
+            check(connection.responseCode in listOf(200,202)) { "Tracked camera unavailable" }
+            // Consume the bounded reply so Android can reuse this TCP connection.
+            connection.inputStream.use { input ->
+                var count = 0
+                while (input.read() != -1) check(++count <= 256) { "Oversized camera acknowledgment" }
+            }
+            if (camera != null) {
+                val elapsed = System.nanoTime()-started
+                cameraSamples++;cameraTotalNanos+=elapsed;cameraMaxNanos=maxOf(cameraMaxNanos,elapsed)
+                if (cameraSamples==300) {
+                    println("BlenderBridge CAMERA_TRANSPORT samples=$cameraSamples meanMs=${cameraTotalNanos/cameraSamples/1e6} maxMs=${cameraMaxNanos/1e6}")
+                    cameraSamples=0;cameraTotalNanos=0;cameraMaxNanos=0
+                }
+            }
+        } finally { connection.disconnect() }
+    }
+
     private fun decode(json: JSONObject): FramePacket {
         require(json.getInt("protocol") == 1) { "Unsupported Blender bridge protocol" }
         fun JSONArray.values(count: Int): List<Float> {
@@ -117,6 +169,31 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
         require(transforms.length() <= 10000) { "Too many transform nodes" }
         val parts = json.optJSONArray("explodeParts") ?: JSONArray()
         require(parts.length() <= 10000) { "Too many explosion parts" }
+        val board = json.optJSONObject("calibrationBoard")?.let { value ->
+            require(value.getInt("version") == 1 && value.getString("dictionary") == "DICT_4X4_50")
+            val width = value.getInt("width"); val height = value.getInt("height")
+            require(width in 100..20000 && height in 100..20000)
+            val markers = value.getJSONArray("markers")
+            require(markers.length() == 4)
+            CalibrationBoard(width, height, List(4) { index ->
+                val marker = markers.getJSONObject(index); val rect = marker.getJSONArray("rect")
+                require(marker.getInt("id") == index && rect.length() == 4)
+                MarkerRect(index, rect.getInt(0), rect.getInt(1), rect.getInt(2), rect.getInt(3)).also {
+                    require(it.x >= 0 && it.y >= 0 && it.width > 0 && it.height > 0 && it.x+it.width <= width && it.y+it.height <= height)
+                }
+            },value.optJSONObject("referenceMarker")?.let { ref ->
+                val rect=ref.getJSONArray("rect")
+                require(ref.getInt("id")==4 && rect.length()==4)
+                MarkerRect(4,rect.getInt(0),rect.getInt(1),rect.getInt(2),rect.getInt(3)).also {
+                    require(it.x>=0 && it.y>=0 && it.width>0 && it.height>0 && it.x+it.width<=width && it.y+it.height<=height)
+                }
+            })
+        }
+        val viewport = json.optJSONObject("viewport")?.let { value ->
+            val distance = value.getDouble("distance").toFloat()
+            require(distance.isFinite() && distance >= 0)
+            ViewportFrame(value.getJSONArray("location").values(3),distance.coerceAtLeast(.001f))
+        }
         return FramePacket(
             json.getString("session"), json.getLong("sequence"),
             if (json.isNull("revision")) null else json.getString("revision"),
@@ -131,6 +208,12 @@ class HttpBridgeRepository(context: Context) : BridgeRepository {
                 ExplosionPart(it.getString("name"), it.getJSONArray("offset").values(3))
             } },
             json.optJSONArray("viewQuaternion")?.values(4), json.optBoolean("sourceHidden", false),
+            board, json.optBoolean("viewportControlEnabled", false),viewport,
+            json.optInt("cameraSyncVersion",0),json.optBoolean("cameraControlEnabled",false),
+            json.optDouble("renderStereoEyeSeparationMm",0.0).toFloat().also { require(it==0f || it in 40f..80f) },
+            json.optInt("renderStreamVersion",0),
+            json.optJSONObject("captureViewport")?.let { it.getDouble("width").toFloat()/it.getDouble("height").toFloat() }?.takeIf { it.isFinite() && it in .1f..10f } ?: (16f/9f),
+            json.optJSONObject("captureViewport")?.optJSONArray("crop")?.values(4) ?: listOf(0f,0f,1f,1f),
         )
     }
 }

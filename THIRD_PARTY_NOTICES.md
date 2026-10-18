@@ -5,6 +5,10 @@ The [MIT license](LICENSE) covers original bridge code and project documentation
 | Component | How it is used | Notice / source |
 | --- | --- | --- |
 | Gradle wrapper | Wrapper scripts/JAR checked into `native-app/gradle` | Copyright notices retained in wrapper scripts; [Apache License 2.0](LICENSES/Apache-2.0.txt) and [Gradle license](https://github.com/gradle/gradle/blob/master/LICENSE) |
+| Nayuki QR Code generator | Vendored `blender-addon/pico_blender_bridge/qrcodegen.py`; no pip install needed in Blender | Copyright Project Nayuki, MIT license retained in file. [Source revision 3c6d0b3](https://github.com/nayuki/QR-Code-generator/blob/3c6d0b3cefb4e049dc337e82237c9644399716a8/python/qrcodegen.py). |
+| ZXing core 3.5.3 | Native app QR decoding; fetched by Gradle | [ZXing](https://github.com/zxing/zxing), Apache 2.0; no external Barcode Scanner app is required. |
+| OpenCV 4.12.0 | ArUco detection in permissioned camera frames; fetched by Gradle | [OpenCV license](https://github.com/opencv/opencv/blob/4.12.0/LICENSE), Apache 2.0; dependencies retain their bundled notices. |
+| WebRTC Android 150.7871.01 | Optional receive-only render-window video; fetched from Maven Central | [Maintainer](https://github.com/webrtc-sdk/android), [MIT packaging notice](LICENSES/WebRTC-SDK-MIT.txt), and [upstream WebRTC / bundled third-party notices](LICENSES/WebRTC-third-party.md). The upstream engine and bundled components retain their respective licenses; the bridge MIT license does not replace them. |
 | Android / AndroidX, Kotlin and coroutines | Build/runtime dependencies fetched by Gradle | Each dependency retains its published license; Android libraries commonly use Apache 2.0. See their Maven artifacts and notices. |
 | PICO Spatial SDK, SpatialUI and generated scaffold resources | Native runtime dependencies and original scaffold conventions | SDKs are fetched from PICO’s Maven repository. PICO terms/notices apply; [official resources](https://developer.picoxr.com/resources/). Retained scaffold/source asset copyright metadata is not relicensed by this project. |
 | Blender and bundled glTF exporter | External authoring/export application | [Blender licensing](https://www.blender.org/about/license/); Blender is installed separately and is not redistributed here. |
@@ -14,3 +18,13 @@ The [MIT license](LICENSE) covers original bridge code and project documentation
 The small occlusion material/scene is original project-authored content exported by PICO Spatial Editor. It retains PICO-generated metadata and honest unmanaged-export provenance. No vendor emulator, runtime SDK installation or Editor binaries are vendored in this repository.
 
 The private workspace used additional scenes for experiments. **BMW models, model adaptations, their renders, downloaded robot assets, exported GLBs and headset room recordings are excluded from this repository and from the release packaging allowlist.** They must not be added under this MIT license. If a future demo uses an external asset, document its author, source, exact license and redistribution requirements separately.
+
+## Optional direct-render worker (installed separately)
+
+The setup helper downloads these packages into a user-local virtual environment; they are not bundled into the add-on or APK. Their own licenses continue to apply:
+
+- [aiortc 1.14.0](https://github.com/aiortc/aiortc) — BSD-3-Clause; includes separately licensed dependencies such as aioice, cryptography, pylibsrtp and pyee.
+- [PyAV 16.1.0](https://github.com/PyAV-Org/PyAV) — BSD-3-Clause bindings. Its binary wheels include FFmpeg libraries with their own LGPL/GPL configuration and notices; consult the installed wheel's license metadata before redistributing a worker environment.
+- [NumPy](https://numpy.org/doc/stable/license.html) — BSD-3-Clause and bundled dependency notices.
+
+No NVIDIA CloudXR SDK or Apple HEVC-alpha codec is bundled by this implementation.
