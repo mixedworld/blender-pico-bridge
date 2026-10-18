@@ -18,10 +18,10 @@ import org.json.JSONObject
 import java.util.UUID
 
 /** Device-local UUID + anchor-relative geometry. No camera images, credentials or old Stage pose. */
-class PersistentAlignmentRepository(context: Context) {
+class PersistentAlignmentRepository(context: Context): AlignmentRepository {
     private val prefs=context.getSharedPreferences("viewport-world-anchor",Context.MODE_PRIVATE)
-    val hasSaved: Boolean get()=prefs.contains("alignment")
-    fun read(): SavedAlignment? = prefs.getString("alignment",null)?.let(AlignmentCodec::decode)
+    override val hasSaved: Boolean get()=prefs.contains("alignment")
+    override fun read(): SavedAlignment? = prefs.getString("alignment",null)?.let(AlignmentCodec::decode)
     data class Created(val saved: SavedAlignment,val anchor: WorldAnchor)
     sealed interface Update {
         data class Located(val anchor: WorldAnchor): Update
@@ -29,7 +29,7 @@ class PersistentAlignmentRepository(context: Context) {
         data object Removed: Update
     }
     /** Finish the disk transaction even if leaving Room cancels the caller. Never delete the old anchor first. */
-    suspend fun save(global: AlignmentSnapshot): Created = withContext(NonCancellable) {
+    override suspend fun save(global: AlignmentSnapshot): Created = withContext(NonCancellable) {
         val old=runCatching { read() }.getOrNull()
         val p=global.monitor.position
         val result=WorldTrackingManager.createAnchor(Vector3(p[0],p[1],p[2]),EulerAngles(),"Blender viewport")
@@ -49,7 +49,7 @@ class PersistentAlignmentRepository(context: Context) {
         Created(saved,anchor)
     }
     /** Subscribe before loading. Bounded, spaced retries allow the room mapper to become ready. */
-    fun track(saved: SavedAlignment, initial: WorldAnchor? = null)=callbackFlow<Update> {
+    override fun track(saved: SavedAlignment, initial: WorldAnchor?)=callbackFlow<Update> {
         val uuid=UUID.fromString(saved.anchorId)
         val subscription=WorldTrackingManager.subscribeAnchorUpdate { update ->
             if(update.anchor.anchorUUID==uuid) {

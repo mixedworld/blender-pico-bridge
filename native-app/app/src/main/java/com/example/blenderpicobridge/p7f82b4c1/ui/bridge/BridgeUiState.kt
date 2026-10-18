@@ -1,6 +1,7 @@
 package com.example.blenderpicobridge.p7f82b4c1.ui.bridge
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.*
 
+enum class ToolsTab(val title: String) { MODEL("Model"), RENDER("Render"), ALIGN("Align"), CONNECTION("Connection") }
 data class BridgeUiState(
     val phase: String = "disconnected", val endpoint: String = "", val token: String = "",
     val modelName: String = "Your Blender scene, beside your desktop", val hasModel: Boolean = false,
@@ -8,7 +9,9 @@ data class BridgeUiState(
     val frame: Int = 1, val revision: String = "—", val scale: Float = 1f, val playing: Boolean = false,
     val fitScale: Float = 1f,
     val modelVisible: Boolean = true,
-    val sourceHidden: Boolean = false, val hideSource: Boolean = true, val hover: Boolean = false, val collapsed: Boolean = false, val connectionPanel: Boolean = false,
+    val sourceHidden: Boolean = false, val hideSource: Boolean = true, val hover: Boolean = false, val collapsed: Boolean = false, val connectionPanel: Boolean = true,
+    val toolsTab: ToolsTab = ToolsTab.MODEL, val advancedAlignment: Boolean = false,
+    val palmTools: Boolean = false, val palmStatus: String = "Room only · draggable launcher always available",
     val room: Boolean = false, val autoRoom: Boolean = false, val enteringRoom: Boolean = false,
     val monitor: MonitorCalibration = MonitorCalibration(),
     val renderWindow: RenderWindowState=RenderWindowState(),val renderStatus: String="Off",val renderStreaming: Boolean=false,
@@ -26,6 +29,11 @@ data class BridgeUiState(
     val linkViewport: Boolean = false, val viewportAllowed: Boolean = false,
 )
 sealed interface BridgeUiEvent {
+    data class SelectTab(val tab: ToolsTab) : BridgeUiEvent
+    data class AdvancedAlignment(val visible: Boolean) : BridgeUiEvent
+    data class PalmTools(val enabled: Boolean) : BridgeUiEvent
+    data class PalmStatus(val message: String) : BridgeUiEvent
+    data object RecenterTools : BridgeUiEvent
     data object OpenMarkerAlignment : BridgeUiEvent
     data class MarkerSideChanged(val value: Float) : BridgeUiEvent
     data class MarkerCurveChanged(val value: Float) : BridgeUiEvent
@@ -72,6 +80,7 @@ sealed interface BridgeUiEvent {
     data class RenderEnabled(val enabled: Boolean): BridgeUiEvent
     data class RenderFaceUser(val enabled: Boolean): BridgeUiEvent
     data class RenderFitModel(val enabled: Boolean): BridgeUiEvent
+    data class RenderHideBorder(val hidden: Boolean?): BridgeUiEvent
     data class RenderLocked(val locked: Boolean): BridgeUiEvent
     data class RenderMode(val mode: RenderWindowMode): BridgeUiEvent
     data class RenderStatus(val value: RenderVideoStatus): BridgeUiEvent

@@ -1,14 +1,16 @@
 # Validation scope
 
-**v0.7.0**, prepared on **18 October 2026**. This is an emulator-first development preview, not a store-ready release.
+**v0.8.0**, prepared on **18 October 2026**. This is an emulator-first development preview, not a store-ready release.
 
 | Check | Evidence / scope |
 | --- | --- |
 | Host | macOS Apple Silicon; Blender 5.2.2 LTS |
 | Native dependency | PICO Spatial SDK BOM 6.1.9; Emulator 6.1.0 |
 | Python regression suite | 59 tests, 13 Blender/GPU-only skips outside Blender, no failures |
-| Kotlin unit suite | 131 tests, no failures |
-| Current functional emulator checks | Four sphere/scene/frame-picking checks plus one production streaming check passed before packaging; includes the cached imported model, hidden native bounds, transformed parents, manual placement restoration and receiver ownership |
+| Kotlin unit suite | 144 tests, no failures; rerun with the isolated release build |
+| Current functional emulator checks | Six scoped SDK checks passed before packaging: render frame picking, billboard placement, native visibility and Tools grip resource lifecycle; includes retained target/receiver ownership and measured attachment bounds |
+| Toolbox flow | User confirmed tab navigation and launcher dragging in the emulator. Actual bridge shutdown cleared the scene and returned to pairing only; packaged 0.8.0 repeated that connection-cleanup check |
+| QR and palm safeguards | Unit coverage for fresh-frame progression, cancelled scan generations and palm dwell; fresh-camera scanning and physical palm interaction remain unverified |
 | Fit visual confirmation | User confirmed the render rectangle stays clear of the native model from the farther viewing position; production numeric gap was about 3 cm |
 | Render stream | Direct mono/stereo and colour/alpha transport exercised in emulator sessions; numerical colour checks and user brightness/colour comparison passed |
 | Reconnect | New Blender action reopened and paired the already-installed emulator viewer, verified by authenticated client polling |
@@ -16,7 +18,7 @@
 | Publication | Exact staged Git tree audited before publication; local credentials, captures, third-party models and private Editor workspace excluded |
 | Downloads | Official standalone Mac/Windows emulator archive URLs returned HTTP 200 on 18 October 2026; launcher filenames were previously inspected in vendor archives |
 
-The reviewed source was rebuilt and packaged from an isolated Git archive using the installed toolchain/dependency cache, without local private Editor assets. The packaged add-on exported the default Cube scaled to 0.5 m; the packaged APK (version 0.7.0 / versionCode 7) paired through the reconnect helper and imported one node in Room at source scale, with 0.5 × 0.5 × 0.5 m grab bounds and an enabled model. This is transport/import/runtime evidence, not an automated visual or hand-input verdict. The GitHub Actions checks build and package on Ubuntu; they do not run a PICO emulator. See the repository’s [Actions](https://github.com/mixedworld/blender-pico-bridge/actions) for the actual release commit’s results.
+The reviewed source was rebuilt and packaged from an isolated Git archive using the installed toolchain/dependency cache, without local private Editor assets. The packaged add-on exported the default Cube scaled to 0.5 m; the packaged APK (version 0.8.0 / versionCode 8) paired through the reconnect helper and imported one node in Room at source scale, with 0.5 × 0.5 × 0.5 m grab bounds and an enabled model. This is transport/import/runtime evidence, not an automated visual or hand-input verdict. The packaged APK also returned to “Connect to Blender” without inspection tabs after the sample bridge stopped; the emulator crash buffer was empty. The GitHub Actions checks build and package on Ubuntu; they do not run a PICO emulator. See the repository’s [Actions](https://github.com/mixedworld/blender-pico-bridge/actions) for the actual release commit’s results.
 
 Standalone vendor-launcher execution and Windows runtime have not been tested here. An x86-64 APK does not establish a Windows runtime pass. Physical-device support is experimental; emulator tests do not establish physical hand-input comfort, camera/depth availability, binocular compositing, environment lighting or sustained performance. No specific device is claimed as a supported release target.
 

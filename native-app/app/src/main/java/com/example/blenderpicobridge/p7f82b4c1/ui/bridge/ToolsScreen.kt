@@ -11,6 +11,8 @@ import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.components.BridgeControls
+import com.pico.spatial.ui.design.Text
+import com.pico.spatial.ui.design.windows.TabBar
 import com.pico.spatial.ui.platform.containers.WindowContainerScope
 import com.pico.spatial.ui.platform.containers.LocalSpatialNavigator
 import com.pico.spatial.ui.platform.containers.OpenStageResult
@@ -29,9 +31,9 @@ fun WindowContainerScope.ToolsScreen() {
     val navigator = LocalSpatialNavigator.current
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val width = if (state.collapsed) 184.dp else 440.dp
-    val height = if (state.collapsed) 72.dp else if (state.connectionPanel) 656.dp
-        else if (state.room && state.monitor.editing) 592.dp else if (state.room) 720.dp else 608.dp
+    val compact=state.collapsed && state.hasModel
+    val width = if (compact) 184.dp else 480.dp
+    val height = if (compact) 72.dp else 640.dp
     LaunchedEffect(width,height,density) {
         val accepted = SpatialContainerUtils.resizeCurrentWindowContainer(context,
             with(density) { width.roundToPx() },with(density) { height.roundToPx() })
@@ -47,5 +49,11 @@ fun WindowContainerScope.ToolsScreen() {
                 }
             } else navigator.closeStage()
         } }
+    }
+    // Native window ornament, deliberately outside the page's scrolling content.
+    if(state.hasModel && !compact) TabBar {
+        ToolsTab.entries.forEach { tab ->
+            item(selected=state.toolsTab==tab,onClick={model.onEvent(BridgeUiEvent.SelectTab(tab))},mainContent={Text(tab.title)})
+        }
     }
 }

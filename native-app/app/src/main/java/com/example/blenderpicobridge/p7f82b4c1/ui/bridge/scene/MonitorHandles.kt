@@ -3,9 +3,18 @@ package com.example.blenderpicobridge.p7f82b4c1.ui.bridge.scene
 import android.util.Log
 import com.example.blenderpicobridge.p7f82b4c1.domain.model.*
 import com.example.blenderpicobridge.p7f82b4c1.domain.usecase.MonitorHandlesUseCase
-import com.pico.spatial.core.ecs.*
-import com.pico.spatial.core.ecs.resource.*
-import com.pico.spatial.core.math.*
+import com.pico.spatial.core.ecs.Entity
+import com.pico.spatial.core.ecs.TransformComponent
+import com.pico.spatial.core.ecs.ModelComponent
+import com.pico.spatial.core.ecs.CollisionComponent
+import com.pico.spatial.core.ecs.InteractableComponent
+import com.pico.spatial.core.ecs.HoverEffectComponent
+import com.pico.spatial.core.ecs.resource.MeshResource
+import com.pico.spatial.core.ecs.resource.ShapeResource
+import com.pico.spatial.core.ecs.resource.PhysicsMaterialResource
+import com.pico.spatial.core.ecs.resource.UnlitMaterial
+import com.pico.spatial.core.math.Vector3
+import com.pico.spatial.core.math.Color4
 
 /** Main-thread guide owner. Resources are shared, retained once, then closed after the entities. */
 internal class MonitorHandles(owner: Entity): AutoCloseable {

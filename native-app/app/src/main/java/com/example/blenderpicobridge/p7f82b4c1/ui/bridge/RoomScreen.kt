@@ -5,6 +5,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.scene.*
 import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.components.ToolsRecoveryButton
 import com.pico.spatial.ui.platform.containers.LocalSpatialNavigator
@@ -15,6 +16,7 @@ fun RoomScreen() {
     val factory = remember(application) { BridgeViewModelFactory(application) }
     val model: BridgeViewModel = viewModel(viewModelStoreOwner = application as ViewModelStoreOwner, factory = factory)
     val navigator = LocalSpatialNavigator.current
+    val sceneState by model.scene.collectAsStateWithLifecycle()
     val feed = remember(model) { StateFlowHolder(model.scene) }
     DisposableEffect(Unit) {
         model.onEvent(BridgeUiEvent.RoomChanged(true))
@@ -25,10 +27,21 @@ fun RoomScreen() {
             navigator.openWindowContainer("BlenderInspection")
         }
     }
-    BridgeScene(feed, Modifier, model::onEvent, room = true, renderVideo=model.renderVideo, tools = {
-        ToolsRecoveryButton {
+    LaunchedEffect(sceneState.file==null) {
+        if(sceneState.file==null) {
+            navigator.openWindowContainer("BlenderTools",tag="tools")
+            navigator.closeStage()
+        }
+    }
+    if(sceneState.file!=null && sceneState.packet!=null) BridgeScene(feed, Modifier, model::onEvent, room = true, renderVideo=model.renderVideo, tools = {
+        ToolsRecoveryButton(draggable=true) {
             model.onEvent(BridgeUiEvent.CollapseChanged(false))
             navigator.openWindowContainer("BlenderTools", tag = "tools")
         }
-    })
+    },palmTools={
+        ToolsRecoveryButton {
+            model.onEvent(BridgeUiEvent.CollapseChanged(false))
+            navigator.openWindowContainer("BlenderTools",tag="tools")
+        }
+    },alignment=model.alignment)
 }

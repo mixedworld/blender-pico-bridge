@@ -41,7 +41,7 @@ data class FramePacket(
     val renderStreamVersion: Int=0,val renderAspect: Float=16f/9f,val renderCrop: List<Float> = listOf(0f,0f,1f,1f),
 )
 sealed interface BridgeUpdate {
-    data class Status(val phase: String, val message: String) : BridgeUpdate
+    data class Status(val phase: String, val message: String, val pairingRejected: Boolean = false) : BridgeUpdate
     data class Frame(val packet: FramePacket) : BridgeUpdate
     data class Model(val packet: FramePacket, val file: File) : BridgeUpdate
 }
@@ -53,4 +53,5 @@ data class SceneFeed(val file: File? = null, val packet: FramePacket? = null, va
     val linkViewport: Boolean = false, val touchAlignment: TouchAlignmentRequest? = null,
     val worldMonitor: WorldMonitorRequest? = null, val monitorHandles: MonitorHandleDraft? = null,
     val alignmentSave: AlignmentSaveRequest? = null,
+    val palmTools: Boolean = false, val toolsReset: Int = 0,
     val renderWindow: RenderWindowState=RenderWindowState(),val renderPairing: Pairing?=null)

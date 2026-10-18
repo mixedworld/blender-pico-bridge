@@ -80,6 +80,7 @@ class SpatialCameraRepository(private val context: Context, private val diagnost
                 projection.uvTo3DInCameraSpace(refs[0],refs[1],refs[2],refs[3],refs[4],refs[5])
             }
             val reader = QRCodeReader()
+            val freshFrame = com.example.blenderpicobridge.p7f82b4c1.domain.usecase.FreshCameraFrameUseCase()
             val detector = if (purpose != ScanPurpose.PAIRING) ArucoDetector(Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50)) else null
             var stability = StabilizeScreenSizeUseCase()
             val markerStability=StabilizeMarkerEstimateUseCase()
@@ -126,6 +127,16 @@ class SpatialCameraRepository(private val context: Context, private val diagnost
                         emit(ScanUpdate.Status(if (purpose == ScanPurpose.PAIRING) "Camera live · frame $frames · looking for QR…" else "Camera live · frame $frames · looking for markers…"))
                     }
                     if (purpose == ScanPurpose.PAIRING) {
+                        val stamp=timestamp.readbackContentSuspend().use { content ->
+                            content.buffer.duplicate().order(ByteOrder.nativeOrder()).apply { rewind() }.long
+                        }
+                        var fingerprint=1
+                        for(i in rgb.indices step 97) fingerprint=31*fingerprint+rgb[i]
+                        if(!freshFrame.accept(stamp,fingerprint,SystemClock.elapsedRealtime())) {
+                            if(frames==1 || frames%10==0) emit(ScanUpdate.Status("Waiting for fresh camera frames · move your head slightly"))
+                            delay(50)
+                            continue
+                        }
                         val pixels = IntArray(width*height) { i ->
                             (0xff shl 24) or ((rgb[i*3].toInt() and 255) shl 16) or ((rgb[i*3+1].toInt() and 255) shl 8) or (rgb[i*3+2].toInt() and 255)
                         }

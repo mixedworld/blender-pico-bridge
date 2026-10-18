@@ -35,6 +35,8 @@ class BridgeViewModelFactory(context: Context) : ViewModelProvider.Factory {
                 options.getFloat("monitorCurveDegrees",0f).takeIf { it.isFinite() && it in 0f..120f } ?: 0f,
                 options.getBoolean("markerSideConfirmed",false)),
             { value -> options.edit().putFloat("markerSideMm",value.sideMm).putFloat("monitorCurveDegrees",value.curveDegrees).putBoolean("markerSideConfirmed",value.confirmed).apply() },
-            ReceiveRenderVideoUseCase(WebRtcRenderRepository(appContext))) as T
+            ReceiveRenderVideoUseCase(WebRtcRenderRepository(appContext)),
+            com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ManageAlignmentUseCase(
+                com.example.blenderpicobridge.p7f82b4c1.data.repository.PersistentAlignmentRepository(appContext))) as T
     }
 }
