@@ -60,8 +60,8 @@ The packager also emits `third-party-notices.zip`. Distribute it alongside the A
 
 Download the matching ZIP linked from the README and extract the complete archive to a writable directory. Leave the package’s `picoemulator`, `platform-tools`, system images and configuration folders together.
 
-- **macOS Apple Silicon:** open Terminal in the extracted `swan_rls_spaceos_oversea_K_pico_emulator_mac_20260902` directory and run `bash start-emulator.sh`.
-- **Windows:** open the extracted `swan_rls_spaceos_oversea_K_pico_emulator_win64_20260902` directory and run `start-emulator.bat` (PowerShell: `.\start-emulator.bat`).
+- **macOS Apple Silicon:** open Terminal in the extracted directory containing `start-emulator.sh` and run `bash start-emulator.sh`.
+- **Windows:** open the extracted directory containing `start-emulator.bat` and run `start-emulator.bat` (PowerShell: `.\start-emulator.bat`).
 
 The launchers were verified as files in the official ZIPs; running these standalone launchers has not been tested here. Review the vendor scripts before running them: the Mac launcher can request administrator access for quarantine handling, and the Windows launcher changes a console preference temporarily. This project does not change system security settings. If the launcher cannot locate its `Pico` AVD or fails host checks, use PICO’s setup guidance or the CLI provisioning route instead of deleting existing emulator data.
 
