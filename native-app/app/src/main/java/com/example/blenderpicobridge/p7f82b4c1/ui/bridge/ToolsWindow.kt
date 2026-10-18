@@ -12,7 +12,7 @@ import com.pico.spatial.ui.platform.resize.ContainerResizeType
 
 fun SpatialAppScope.toolsWindow() {
     WindowContainer(id="BlenderTools",form=Form.Planar,
-        defaultSize=WindowContainerSize(440.dp,608.dp),
+        defaultSize=WindowContainerSize(480.dp,640.dp),
         defaultCaptionBarType=CaptionBarType.Default,
         resizeType=ContainerResizeType.ContentSize,
         enableMaterialBackground=true,

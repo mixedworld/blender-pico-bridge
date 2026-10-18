@@ -10,6 +10,7 @@ import com.example.blenderpicobridge.p7f82b4c1.ui.bridge.scene.sceneOwned
 import com.pico.spatial.core.ecs.CollisionComponent
 import com.pico.spatial.core.ecs.Entity
 import com.pico.spatial.core.ecs.InteractableComponent
+import com.pico.spatial.core.ecs.ModelComponent
 import com.pico.spatial.core.ecs.TransformComponent
 import com.pico.spatial.core.ecs.resource.PhysicsMaterialResource
 import com.pico.spatial.core.ecs.resource.ShapeResource
@@ -52,6 +53,13 @@ class RenderFramePickingTest {
         try {
             update()
             val savedPose=window.pose()
+            val originalTargets=targets()
+            state=state.copy(hideBorder=true);update()
+            assertTrue(window.anchor.getChildren().filter {it.components[ModelComponent::class.java]!=null}.all{!it.enabled})
+            assertEquals(originalTargets,targets())
+            assertEquals(savedPose,window.pose());assertEquals(1,opens);assertEquals(0,closes)
+            state=state.copy(hideBorder=false);update()
+            assertTrue(window.anchor.getChildren().filter {it.components[ModelComponent::class.java]!=null}.all{it.enabled})
             repeat(10) {
                 val borders=targets()
                 assertEquals(4,borders.size)

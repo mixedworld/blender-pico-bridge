@@ -22,9 +22,9 @@ python3 tools/package_release.py
 
 Review `dist/release/SHA256SUMS`, install the candidate APK on the emulator, and state the host platform and actual validation limits in release notes. Treat Windows as unverified until someone tests it. The debug signing key is local to its build machine; do not commit or upload a keystore.
 
-Release versions must match between add-on `bl_info`, Android `versionName` and the tag; increment Android `versionCode` for updates. Version 0.7.0 uses versionCode 7. Release assets are the versioned add-on ZIP, universal debug APK, `render-worker-setup.zip`, `third-party-notices.zip` and `SHA256SUMS`. Source is available through the tag. Include the third-party notices with redistributed APKs.
+Release versions must match between add-on `bl_info`, Android `versionName` and the tag; increment Android `versionCode` for updates. Version 0.8.0 uses versionCode 8. Release assets are the versioned add-on ZIP, universal debug APK, `render-worker-setup.zip`, `third-party-notices.zip` and `SHA256SUMS`. Source is available through the tag. Include the third-party notices with redistributed APKs.
 
-For 0.7.0, use the README’s Room Cube path and keep experimental device instructions generic. Do not publish device-specific claims, local calibration payloads or private test assets.
+For 0.8.0, use the README’s Room Cube path and keep experimental device instructions generic. Do not publish device-specific claims, local calibration payloads or private test assets.
 
 ## Publish when GitHub is connected
 

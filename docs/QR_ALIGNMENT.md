@@ -1,6 +1,6 @@
 # QR pairing, curved monitor measurement and viewport linking
 
-Included in **v0.7.0**. Install the matching release add-on and APK. Five-handle viewport placement is the primary alignment method; marker, depth, touch and automatic world alignment remain experimental. Start with the [Room Cube walkthrough](../README.md#4-run-your-first-blender-cube-in-room-mode). No particular physical device is a supported target of this guide.
+Included in **v0.8.0**. Install the matching release add-on and APK. Five-handle viewport placement is the primary alignment method; marker, depth, touch and automatic world alignment remain experimental. Start with the [Room Cube walkthrough](../README.md#4-run-your-first-blender-cube-in-room-mode). No particular physical device is a supported target of this guide.
 
 ## Pair from Blender
 
@@ -14,6 +14,12 @@ Choose **Connect via → Wi-Fi / LAN** when the headset can reach the computer's
 
 **Show large pairing QR** toggles the QR independently from the markers, even when a headset is already connected. Its size follows the viewport so it remains readable on a high-resolution monitor. If scanning stalls, the status distinguishes service startup, first-frame acquisition and live QR searching.
 
+## Toolbox navigation
+
+The main pages are now the native **Model / Render / Align / Connection** tabs. Offline startup and sustained connection loss show pairing only; ordinary scene revisions retain placement. Starting a QR scan requires fresh advancing camera frames and rejects results from cancelled scans.
+
+Manual five-handle alignment is under **Align → Adjust corner handles**. All marker/depth/touch methods below are under **Align → Experimental calibration**. Their existing capture/review steps remain experimental.
+
 ## Move and recover the toolbox
 
 The toolbox is an independent PICO OS window in both Preview and Room. Pinch its system movement handle to reposition it. Its native close button closes only the toolbox; press the compact **Tools** button beside the model to reopen it. This action expands the menu and reuses the same tagged window when it is already open. Connection, alignment and inspection values remain in the application-scoped state. Placement after a closed window is recreated is managed by PICO OS.
@@ -22,7 +28,7 @@ The user verified native movement and close/reopen recovery in Room on the real 
 
 ## Manual alignment with five handles
 
-**This is the primary alignment method.** In **Room → Align viewport** (**Align monitor** in older builds), four cyan handles appear at the frame corners and an amber handle appears at the top centre.
+**This is the primary alignment method.** In **Room → Tools → Align → Adjust corner handles** (**Align viewport / Align monitor** in older builds), four cyan handles appear at the frame corners and an amber handle appears at the top centre.
 
 **Place the handles on the Blender 3D viewport image boundary, not the physical monitor corners.** Exclude the bezel, Blender headers, Timeline, Outliner and other panels. This is the rectangle whose camera image is synchronized; using the whole monitor changes the projection window and can offset or mis-scale the model. Maximize the viewport first if you want it to cover most of the display, then keep that layout unchanged.
 

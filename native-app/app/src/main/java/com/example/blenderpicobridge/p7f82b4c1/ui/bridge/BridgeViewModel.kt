@@ -17,7 +17,8 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
     private val saveSourceOption: (Boolean) -> Unit = {}, private val camera: ScanCameraUseCase? = null,
     initialMarkerSettings: MarkerSettings = MarkerSettings(),
     private val saveMarkerSettings: (MarkerSettings)->Unit = {},
-    val renderVideo: com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase? = null) : ViewModel() {
+    val renderVideo: com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ReceiveRenderVideoUseCase? = null,
+    val alignment: com.example.blenderpicobridge.p7f82b4c1.domain.usecase.ManageAlignmentUseCase? = null) : ViewModel() {
     private val _state = MutableStateFlow(BridgeUiState(endpoint = pairing.endpoint, token = pairing.token,
         mode = initialMode, explosion = initialExplosion.coerceIn(0f, 1f),markerSettings=initialMarkerSettings,
         autoRoom = initialRoom, collapsed = initiallyCollapsed, hideSource = hideSourceInitial,
@@ -29,6 +30,9 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         commandSequence = if (initialMonitor) 1 else 0, debugReveal = debugReveal))
     val scene: StateFlow<SceneFeed> = _scene.asStateFlow()
     private var connection: Job? = null
+    private var connectionGeneration=0
+    private var lossJob: Job? = null
+    private var scanGeneration=0
     private var visibilityJob: Job? = null
     private var sourceHidden = false
     private var scanJob: Job? = null
@@ -115,8 +119,13 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             }
         }
     }
-    private fun stopScan() { scanJob?.cancel(); scanJob = null; _state.update { it.copy(scanPurpose = null) } }
+    private fun stopScan() { scanGeneration++;scanJob?.cancel(); scanJob = null; _state.update { it.copy(scanPurpose = null) } }
     private fun requestScan(purpose: ScanPurpose) {
+        if(purpose==ScanPurpose.PAIRING) {
+            if(connection!=null || state.value.hasModel) endConnection("Scan Blender’s current QR")
+            scannedSession=null
+            _state.update { it.copy(token="",manualConnection=false,connectionPanel=true,collapsed=false) }
+        }
         clearHandles();stopScan()
         _state.update { it.copy(scanPurpose = purpose, scanRequest = it.scanRequest+1, measuredScreen = null, scanStatus = "Camera access required") }
     }
@@ -124,12 +133,15 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         val purpose = state.value.scanPurpose ?: return
         val repository = camera ?: run { _state.update { it.copy(scanStatus = "Camera unavailable. Use manual setup.") }; return }
         scanJob?.cancel()
+        val generation=++scanGeneration
         scanJob = viewModelScope.launch {
             try {
                 repository(purpose,_scene.value.packet?.board,markerSettings).collect { update ->
+                    if(generation!=scanGeneration || state.value.scanPurpose!=purpose)return@collect
                     when (update) {
                         is ScanUpdate.Status -> _state.update { it.copy(scanStatus = update.text) }
                         is ScanUpdate.Paired -> {
+                            scanGeneration++
                             scannedSession = update.pairing.expectedSession
                             _state.update { it.copy(endpoint = update.pairing.endpoint,token = update.pairing.token,
                                 scanPurpose = null,scanStatus = "QR found · connecting…") }
@@ -142,9 +154,9 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                             scanStatus = "Screen measured. Use this size, then confirm placement manually.") }
                     }
                 }
-            } catch (_: TimeoutCancellationException) { _state.update { it.copy(scanPurpose = null,scanStatus = "Camera/depth unavailable or scan timed out. Retry or use manual setup.") } }
+            } catch (_: TimeoutCancellationException) { if(generation==scanGeneration) _state.update { it.copy(scanPurpose = null,scanStatus = "Camera/depth unavailable or scan timed out. Retry or use manual setup.") } }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { _state.update { it.copy(scanPurpose = null,scanStatus = "Camera/depth unavailable. Check permissions and retry, or use manual setup.") } }
+            catch (_: Exception) { if(generation==scanGeneration) _state.update { it.copy(scanPurpose = null,scanStatus = "Camera/depth unavailable. Check permissions and retry, or use manual setup.") } }
         }
     }
     private fun sourceVisibility(hidden: Boolean) {
@@ -235,8 +247,37 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         _state.update { it.copy(touchPhase=TouchAlignmentPhase.CAPTURE,touchCount=0,touchedMonitor=null,touchStatus="Bring the touching fingertip into view.") }
         _scene.update { it.copy(touchAlignment=TouchAlignmentRequest(touchSequence,state.value.touchingHand,board)) }
     }
+    /** Release live resources by removing the scene composition; keep persisted room anchors. */
+    private fun endConnection(message: String, rejected: Boolean=false) {
+        connectionGeneration++;lossJob?.cancel();lossJob=null
+        beforeRenderLink=false;enableRender(false);linkViewport(false)
+        if(sourceHidden)sourceVisibility(false)
+        closeMarkers();cancelTouch();clearHandles()
+        connection?.cancel();connection=null;loadedRevision=null;scannedSession=null
+        roomViewportRequested=false;resumeRoomViewportOnModel=null;lockedHandles=null
+        val current=state.value
+        if(rejected)connect.forgetToken(current.endpoint)
+        _scene.value=SceneFeed(mode=current.mode,modelVisible=current.modelVisible,hideSource=current.hideSource,
+            hover=current.hover,palmTools=current.palmTools,renderWindow=current.renderWindow.copy(enabled=false))
+        _state.update { it.copy(phase=if(rejected) "error" else "disconnected",hasModel=false,status=message,
+            note="Connect to Blender to load the scene.",connectionPanel=true,collapsed=false,
+            manualConnection=false,scanStatus="",token=if(rejected) "" else it.token,
+            playing=false,partCount=0,revision="—",sourceHidden=false,viewportAllowed=false,
+            renderAvailable=false,renderStreaming=false,renderStatus="Off",linkViewport=false,
+            advancedAlignment=false,monitor=it.monitor.copy(enabled=false,locked=false,editing=false)) }
+    }
     fun onEvent(event: BridgeUiEvent) {
         when (event) {
+            is BridgeUiEvent.SelectTab -> {
+                stopScan();cancelTouch();closeMarkers()
+                _state.update { it.copy(toolsTab=event.tab,connectionPanel=event.tab==ToolsTab.CONNECTION,advancedAlignment=false,manualConnection=false) }
+            }
+            is BridgeUiEvent.AdvancedAlignment -> _state.update { it.copy(advancedAlignment=event.visible) }
+            is BridgeUiEvent.PalmTools -> {
+                _state.update { it.copy(palmTools=event.enabled) };_scene.update { it.copy(palmTools=event.enabled) }
+            }
+            is BridgeUiEvent.PalmStatus -> _state.update { it.copy(palmStatus=event.message) }
+            BridgeUiEvent.RecenterTools -> _scene.update { it.copy(toolsReset=it.toolsReset+1) }
             BridgeUiEvent.OpenMarkerAlignment -> if (state.value.room && state.value.monitor.editing) {
                 stopScan();cancelTouch();linkViewport(false);clearHandles()
                 _state.update { it.copy(markerPhase=MarkerPhase.SETUP,markerFrame=null,scanStatus="") }
@@ -325,8 +366,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             is BridgeUiEvent.HoverChanged -> { _state.update { it.copy(hover = event.enabled) }; _scene.update { it.copy(hover = event.enabled) } }
             is BridgeUiEvent.CollapseChanged -> { if (event.collapsed) { closeMarkers();cancelTouch() }; _state.update { it.copy(collapsed = event.collapsed) } }
             is BridgeUiEvent.ConnectionPanelChanged -> {
-                closeMarkers(); cancelTouch(); _state.update { it.copy(connectionPanel = event.visible, collapsed = false, manualConnection = false) }
-                if (event.visible) requestScan(ScanPurpose.PAIRING)
+                closeMarkers(); cancelTouch(); _state.update { it.copy(connectionPanel = event.visible || !it.hasModel, toolsTab=if(event.visible) ToolsTab.CONNECTION else ToolsTab.MODEL, collapsed = false, manualConnection = false) }
             }
             is BridgeUiEvent.RoomChanged -> {
                 if (!event.room) { enableRender(false);closeMarkers();cancelTouch();clearHandles(); _scene.update { it.copy(alignmentSave=null) } }
@@ -336,13 +376,13 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             }
             is BridgeUiEvent.RoomPending -> _state.update { it.copy(enteringRoom = event.pending) }
             is BridgeUiEvent.Feedback -> _state.update { it.copy(note = event.message) }
-            is BridgeUiEvent.PoseSaved -> _scene.update { if (event.room) it.copy(roomPose = event.pose) else it.copy(previewPose = event.pose) }
+            is BridgeUiEvent.PoseSaved -> if(_scene.value.file!=null) _scene.update { if (event.room) it.copy(roomPose = event.pose) else it.copy(previewPose = event.pose) }
             BridgeUiEvent.Fit -> command(SceneCommand.FIT)
             BridgeUiEvent.SourceSize -> command(SceneCommand.SOURCE_SIZE)
             BridgeUiEvent.AlignMonitor -> if (state.value.room) {
                 enableRender(false);linkViewport(false);closeMarkers();cancelTouch();if(sourceHidden) sourceVisibility(false)
                 _scene.update { it.copy(alignmentSave=null) };monitor { it.copy(enabled=true,editing=true,locked=false) };beginHandles()
-                _state.update { it.copy(collapsed=false,connectionPanel=false,note="Place cyan handles on Blender’s 3D viewport corners, not the monitor corners; adjust the amber handle for curve.") }
+                _state.update { it.copy(collapsed=false,connectionPanel=false,toolsTab=ToolsTab.ALIGN,advancedAlignment=false,note="Place cyan handles on Blender’s 3D viewport corners, not the monitor corners; adjust the amber handle for curve.") }
             }
             is BridgeUiEvent.MonitorHandleMoved -> moveHandle(event)
             BridgeUiEvent.LockMonitor -> if(state.value.room && state.value.handleError==null) {
@@ -368,16 +408,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             is BridgeUiEvent.MonitorPose -> monitor { it.copy(position = event.position, quaternion = event.quaternion) }
             BridgeUiEvent.Connect -> { stopScan(); open() }
             BridgeUiEvent.Refresh -> { stopScan(); open(refresh = true) }
-            BridgeUiEvent.Disconnect -> {
-                enableRender(false);closeMarkers();cancelTouch();clearHandles()
-                linkViewport(false)
-                stopScan()
-                if (sourceHidden) sourceVisibility(false)
-                connection?.cancel()
-                connection = null
-                _state.update { it.copy(phase = "disconnected", status = "Disconnected", playing = false,
-                    note = "Last complete model retained. Connect for current Blender data.") }
-            }
+            BridgeUiEvent.Disconnect -> endConnection("Disconnected")
             BridgeUiEvent.Reset -> {
                 if (sourceHidden) sourceVisibility(false)
                 _scene.update { it.copy(reset = it.reset + 1, explosion = 0f) }
@@ -386,6 +417,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             is BridgeUiEvent.RenderEnabled -> enableRender(event.enabled)
             is BridgeUiEvent.RenderFaceUser -> renderWindow(state.value.renderWindow.copy(faceUser=event.enabled))
             is BridgeUiEvent.RenderFitModel -> renderWindow(state.value.renderWindow.copy(fitModel=event.enabled))
+            is BridgeUiEvent.RenderHideBorder -> renderWindow(state.value.renderWindow.copy(hideBorder=event.hidden))
             is BridgeUiEvent.RenderLocked -> renderWindow(state.value.renderWindow.copy(locked=event.locked))
             is BridgeUiEvent.RenderMode -> {
                 renderWindow(state.value.renderWindow.copy(mode=event.mode));renderCamera()
@@ -404,9 +436,9 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
             }
             BridgeUiEvent.RecenterRender -> renderWindow(state.value.renderWindow.let { it.copy(reset=it.reset+1) })
             BridgeUiEvent.RetryRender -> renderWindow(state.value.renderWindow.let { it.copy(retry=it.retry+1) })
-            is BridgeUiEvent.ModelReady -> {
+            is BridgeUiEvent.ModelReady -> if(connection?.isActive==true && _scene.value.packet?.revision==event.revision) {
                 loadedRevision = event.revision
-                _state.update { it.copy(phase = "live", hasModel = true, status = "Live from Blender", fitScale = event.fitScale,
+                _state.update { it.copy(phase = "live", hasModel = true, toolsTab=if(it.hasModel) it.toolsTab else ToolsTab.MODEL,connectionPanel=if(it.hasModel) it.connectionPanel else false, status = "Live from Blender", fitScale = event.fitScale,
                     note = inspectionHint(it.mode)) }
                 if (resumeRoomViewportOnModel == event.revision && _scene.value.packet?.revision == event.revision)
                     linkViewport(true)
@@ -433,7 +465,9 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
 
     private fun open(refresh: Boolean = false) {
         linkViewport(false)
+        lossJob?.cancel();lossJob=null
         connection?.cancel()
+        val generation=++connectionGeneration
         val refreshing = refresh && state.value.phase == "live"
         val pairing = Pairing(state.value.endpoint, state.value.token,scannedSession)
         val flow = try { connect(pairing) } catch (error: IllegalArgumentException) {
@@ -443,10 +477,23 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
         _state.update { it.copy(phase = if (refreshing && it.hasModel) "refreshing" else if (it.hasModel) "reconnecting" else "connecting", status = "Connecting to Blender…") }
         connection = viewModelScope.launch {
             flow.collect { update ->
+                if(generation!=connectionGeneration)return@collect
                 when (update) {
-                    is BridgeUpdate.Status -> _state.update { it.copy(phase = if (refreshing && it.hasModel && update.phase in setOf("connecting", "receiving")) "refreshing" else if (it.hasModel && update.phase == "connecting") "reconnecting" else update.phase, status = update.message,
-                        note = if (it.hasModel && update.phase in setOf("stale", "error")) "Last complete model retained. Refresh to reconnect." else it.note) }
+                    is BridgeUpdate.Status -> {
+                        if(update.pairingRejected || update.phase=="disconnected") { endConnection(update.message,update.pairingRejected);return@collect }
+                        _state.update { it.copy(phase = if (refreshing && it.hasModel && update.phase in setOf("connecting", "receiving")) "refreshing" else if (it.hasModel && update.phase == "connecting") "reconnecting" else update.phase, status = update.message) }
+                        if(update.phase in setOf("stale","error")) {
+                            if(lossJob==null)lossJob=viewModelScope.launch {
+                                delay(3500)
+                                if(generation==connectionGeneration)endConnection("Connection lost · check Blender and reconnect")
+                            }
+                        } else {
+                            lossJob?.cancel();lossJob=null
+                            if(update.phase=="empty" && state.value.hasModel)endConnection(update.message)
+                        }
+                    }
                     is BridgeUpdate.Model -> {
+                        lossJob?.cancel();lossJob=null
                         // The old-revision camera POST may fail before the state poll sees this model.
                         val resumeRoomLink = state.value.room && (roomViewportRequested || state.value.linkViewport || resumeRoomViewportOnModel != null)
                         linkViewport(false, preserveRoomIntent = true)
@@ -458,6 +505,7 @@ class BridgeViewModel(pairing: Pairing, private val connect: ConnectBridgeUseCas
                         }
                     }
                     is BridgeUpdate.Frame -> {
+                        lossJob?.cancel();lossJob=null
                         _state.update { it.copy(renderAvailable=update.packet.renderStreamVersion in 1..3) }
                         if(kotlin.math.abs(state.value.renderWindow.aspect-update.packet.renderAspect)>.001f)
                             renderWindow(state.value.renderWindow.copy(aspect=update.packet.renderAspect))
